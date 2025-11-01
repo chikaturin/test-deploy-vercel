@@ -3,6 +3,7 @@ import mongoose from "mongoose";
 import dotenv from "dotenv";
 import authRoutes from "./routes/authRoutes.js";
 import userRoutes from "./routes/userRoutes.js";
+import pharmaCompanyRoutes from "./routes/pharmaCompanyRoutes.js";
 
 dotenv.config();
 
@@ -15,6 +16,7 @@ app.use(express.urlencoded({ extended: true }));
 
 app.use("/api/auth", authRoutes);
 app.use("/api/users", userRoutes);
+app.use("/api/pharma-company", pharmaCompanyRoutes);
 
 app.get("/", (req, res) => {
   res.json({ message: "Drug Traceability Backend API" });
