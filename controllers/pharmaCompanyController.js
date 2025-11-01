@@ -5,7 +5,7 @@ import ManufacturerInvoice from "../models/ManufacturerInvoice.js";
 import PharmaCompany from "../models/PharmaCompany.js";
 import User from "../models/User.js";
 import Distributor from "../models/Distributor.js";
-import { mintNFT, manufacturerTransferToDistributor } from "../services/blockchainService.js";
+import { uploadFolderToIPFS } from "../services/ipfsService.js";
 
 // ============ QUẢN LÝ THUỐC ============
 
@@ -411,16 +411,62 @@ export const getDrugById = async (req, res) => {
 
 // ============ QUẢN LÝ SẢN XUẤT VÀ PHÂN PHỐI ============
 
-// Tạo đơn thuốc (đóng gói) - mint NFT
-// Lưu ý: Frontend sẽ gọi IPFS trước, sau đó gọi API này để mint NFT và lưu vào DB
-export const packageDrug = async (req, res) => {
+// Bước 1: Upload folder lên IPFS (Pinata)
+// Frontend gọi API này trước khi mint NFT
+export const uploadDrugPackageToIPFS = async (req, res) => {
   try {
     const user = req.user;
     
     if (user.role !== "pharma_company") {
       return res.status(403).json({
         success: false,
-        message: "Chỉ có pharma company mới có thể đóng gói thuốc",
+        message: "Chỉ có pharma company mới có thể upload IPFS",
+      });
+    }
+
+    const { quantity, metadata } = req.body;
+
+    if (!quantity || quantity <= 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Quantity phải lớn hơn 0",
+      });
+    }
+
+    // Gọi Pinata IPFS để upload folder
+    const ipfsResult = await uploadFolderToIPFS(quantity, metadata);
+
+    return res.status(200).json({
+      success: true,
+      message: "Upload IPFS thành công",
+      data: {
+        ipfsHash: ipfsResult.ipfsHash,
+        ipfsUrl: ipfsResult.ipfsUrl,
+        amount: ipfsResult.amount,
+        range: ipfsResult.range,
+      },
+    });
+  } catch (error) {
+    console.error("Lỗi khi upload IPFS:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Lỗi server khi upload IPFS",
+      error: error.message,
+    });
+  }
+};
+
+// Bước 2: Lưu NFT vào DB sau khi mint thành công trên smart contract
+// Frontend sẽ gọi smart contract trực tiếp để mint NFT, sau đó gọi API này để lưu vào DB
+// Backend cũng có thể lắng nghe event mintNFTEvent từ blockchain và tự động lưu
+export const saveMintedNFTs = async (req, res) => {
+  try {
+    const user = req.user;
+    
+    if (user.role !== "pharma_company") {
+      return res.status(403).json({
+        success: false,
+        message: "Chỉ có pharma company mới có thể lưu NFT",
       });
     }
 
@@ -432,28 +478,36 @@ export const packageDrug = async (req, res) => {
       });
     }
 
-    if (!user.walletAddress) {
-      return res.status(400).json({
-        success: false,
-        message: "User chưa có wallet address",
-      });
-    }
-
     const {
       drugId,
+      tokenIds, // Array các tokenId đã mint
+      transactionHash, // Transaction hash từ smart contract
       quantity,
       mfgDate,
       expDate,
       batchNumber,
       ipfsUrl,
       metadata,
-      manufacturerPrivateKey, // Private key để sign transaction
     } = req.body;
 
-    if (!drugId || !quantity || !ipfsUrl || !manufacturerPrivateKey) {
+    if (!drugId || !tokenIds || !transactionHash || !quantity || !ipfsUrl) {
       return res.status(400).json({
         success: false,
-        message: "drugId, quantity, ipfsUrl và manufacturerPrivateKey là bắt buộc",
+        message: "drugId, tokenIds, transactionHash, quantity và ipfsUrl là bắt buộc",
+      });
+    }
+
+    if (!Array.isArray(tokenIds) || tokenIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "tokenIds phải là một array không rỗng",
+      });
+    }
+
+    if (tokenIds.length !== quantity) {
+      return res.status(400).json({
+        success: false,
+        message: "Số lượng tokenIds phải bằng quantity",
       });
     }
 
@@ -469,7 +523,19 @@ export const packageDrug = async (req, res) => {
     if (drug.manufacturer.toString() !== pharmaCompany._id.toString()) {
       return res.status(403).json({
         success: false,
-        message: "Bạn không có quyền đóng gói thuốc này",
+        message: "Bạn không có quyền lưu NFT cho thuốc này",
+      });
+    }
+
+    // Kiểm tra xem tokenIds đã được lưu chưa
+    const existingNFTs = await NFTInfo.find({
+      tokenId: { $in: tokenIds },
+    });
+
+    if (existingNFTs.length > 0) {
+      return res.status(400).json({
+        success: false,
+        message: `Một số tokenId đã tồn tại trong hệ thống: ${existingNFTs.map(nft => nft.tokenId).join(", ")}`,
       });
     }
 
@@ -480,29 +546,10 @@ export const packageDrug = async (req, res) => {
       mfgDate: mfgDate ? new Date(mfgDate) : new Date(),
       expDate: expDate ? new Date(expDate) : null,
       quantity,
+      chainTxHash: transactionHash,
     });
 
     await proofOfProduction.save();
-
-    // Tạo mảng amounts (mỗi NFT có amount = 1)
-    const amounts = Array(quantity).fill(1);
-
-    // Gọi smart contract để mint NFT
-    let mintResult;
-    try {
-      mintResult = await mintNFT(manufacturerPrivateKey, amounts);
-    } catch (blockchainError) {
-      // Nếu mint thất bại, xóa proof of production
-      await ProofOfProduction.findByIdAndDelete(proofOfProduction._id);
-      
-      return res.status(500).json({
-        success: false,
-        message: "Lỗi khi mint NFT trên blockchain",
-        error: blockchainError.message,
-      });
-    }
-
-    const tokenIds = mintResult.tokenIds;
 
     // Lưu từng NFT vào database
     const nftInfos = [];
@@ -521,7 +568,7 @@ export const packageDrug = async (req, res) => {
         unit: "hộp",
         owner: user._id,
         status: "minted",
-        chainTxHash: mintResult.transactionHash,
+        chainTxHash: transactionHash,
         ipfsUrl,
         metadata: metadata || {},
         proofOfProduction: proofOfProduction._id,
@@ -531,25 +578,21 @@ export const packageDrug = async (req, res) => {
       nftInfos.push(nftInfo);
     }
 
-    // Cập nhật chainTxHash cho proof of production
-    proofOfProduction.chainTxHash = mintResult.transactionHash;
-    await proofOfProduction.save();
-
     return res.status(201).json({
       success: true,
-      message: "Đóng gói và mint NFT thành công",
+      message: "Lưu NFT vào database thành công",
       data: {
         proofOfProduction,
         nftInfos,
-        transactionHash: mintResult.transactionHash,
+        transactionHash,
         tokenIds,
       },
     });
   } catch (error) {
-    console.error("Lỗi khi đóng gói thuốc:", error);
+    console.error("Lỗi khi lưu NFT:", error);
     return res.status(500).json({
       success: false,
-      message: "Lỗi server khi đóng gói thuốc",
+      message: "Lỗi server khi lưu NFT",
       error: error.message,
     });
   }
@@ -595,13 +638,12 @@ export const transferToDistributor = async (req, res) => {
       vatAmount,
       finalAmount,
       notes,
-      manufacturerPrivateKey,
     } = req.body;
 
-    if (!distributorId || !tokenIds || !amounts || !manufacturerPrivateKey) {
+    if (!distributorId || !tokenIds || !amounts) {
       return res.status(400).json({
         success: false,
-        message: "distributorId, tokenIds, amounts và manufacturerPrivateKey là bắt buộc",
+        message: "distributorId, tokenIds và amounts là bắt buộc",
       });
     }
 
@@ -642,7 +684,8 @@ export const transferToDistributor = async (req, res) => {
       });
     }
 
-    // Lưu vào database với trạng thái pending
+    // Lưu vào database với trạng thái pending (chờ frontend gọi smart contract)
+    // Frontend sẽ gọi smart contract trực tiếp, sau đó backend lắng nghe event để cập nhật
     const manufacturerInvoice = new ManufacturerInvoice({
       fromManufacturer: user._id,
       toDistributor: distributor.user._id,
@@ -655,61 +698,111 @@ export const transferToDistributor = async (req, res) => {
       vatAmount,
       finalAmount,
       notes,
-      status: "pending",
+      status: "pending", // Chờ frontend gọi smart contract
     });
 
     await manufacturerInvoice.save();
 
-    try {
-      // Gọi smart contract để transfer NFT
-      const transferResult = await manufacturerTransferToDistributor(
-        manufacturerPrivateKey,
+    // Trả về thông tin để frontend có thể gọi smart contract
+    // Frontend sẽ gọi: manufacturerTransferToDistributor(tokenIds, amounts, distributorAddress)
+    // Sau đó frontend có thể gọi API saveTransfer để lưu transactionHash (hoặc backend lắng nghe event)
+    
+    return res.status(200).json({
+      success: true,
+      message: "Đã lưu invoice vào database với trạng thái pending. Vui lòng gọi smart contract để chuyển NFT.",
+      data: {
+        invoice: manufacturerInvoice,
+        distributorAddress: distributor.user.walletAddress,
         tokenIds,
         amounts,
-        distributor.user.walletAddress
-      );
-
-      // Cập nhật trạng thái invoice
-      manufacturerInvoice.status = "sent";
-      manufacturerInvoice.chainTxHash = transferResult.transactionHash;
-      await manufacturerInvoice.save();
-
-      // Cập nhật trạng thái NFT
-      await NFTInfo.updateMany(
-        { tokenId: { $in: tokenIds } },
-        {
-          $set: {
-            status: "transferred",
-            owner: distributor.user._id,
-          },
-        }
-      );
-
-      return res.status(200).json({
-        success: true,
-        message: "Chuyển giao đơn thuốc thành công",
-        data: {
-          invoice: manufacturerInvoice,
-          transactionHash: transferResult.transactionHash,
-          tokenIds,
-        },
-      });
-    } catch (blockchainError) {
-      // Nếu transfer thất bại, giữ trạng thái pending
-      console.error("Lỗi khi transfer NFT:", blockchainError);
-      
-      return res.status(500).json({
-        success: false,
-        message: "Lỗi khi transfer NFT trên blockchain. Invoice đã được lưu với trạng thái pending.",
-        error: blockchainError.message,
-        invoiceId: manufacturerInvoice._id,
-      });
-    }
+        // Frontend sẽ gọi smart contract: manufacturerTransferToDistributor(tokenIds, amounts, distributorAddress)
+        // Sau khi thành công, frontend sẽ gọi API saveTransfer để lưu transactionHash
+      },
+    });
   } catch (error) {
     console.error("Lỗi khi chuyển giao đơn thuốc:", error);
     return res.status(500).json({
       success: false,
       message: "Lỗi server khi chuyển giao đơn thuốc",
+      error: error.message,
+    });
+  }
+};
+
+// Lưu transaction hash sau khi transfer NFT thành công trên smart contract
+// Frontend sẽ gọi smart contract trực tiếp, sau đó gọi API này để lưu transactionHash
+export const saveTransferTransaction = async (req, res) => {
+  try {
+    const user = req.user;
+
+    if (user.role !== "pharma_company") {
+      return res.status(403).json({
+        success: false,
+        message: "Chỉ có pharma company mới có thể lưu transaction transfer",
+      });
+    }
+
+    const {
+      invoiceId,
+      transactionHash,
+      tokenIds,
+    } = req.body;
+
+    if (!invoiceId || !transactionHash || !tokenIds) {
+      return res.status(400).json({
+        success: false,
+        message: "invoiceId, transactionHash và tokenIds là bắt buộc",
+      });
+    }
+
+    // Tìm invoice
+    const manufacturerInvoice = await ManufacturerInvoice.findById(invoiceId);
+
+    if (!manufacturerInvoice) {
+      return res.status(404).json({
+        success: false,
+        message: "Không tìm thấy invoice",
+      });
+    }
+
+    // Kiểm tra invoice thuộc về user này
+    if (manufacturerInvoice.fromManufacturer.toString() !== user._id.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: "Bạn không có quyền cập nhật invoice này",
+      });
+    }
+
+    // Cập nhật invoice
+    manufacturerInvoice.status = "sent";
+    manufacturerInvoice.chainTxHash = transactionHash;
+    await manufacturerInvoice.save();
+
+    // Cập nhật trạng thái NFT
+    await NFTInfo.updateMany(
+      { tokenId: { $in: tokenIds } },
+      {
+        $set: {
+          status: "transferred",
+          owner: manufacturerInvoice.toDistributor,
+        },
+      }
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: "Lưu transaction transfer thành công",
+      data: {
+        invoice: manufacturerInvoice,
+        transactionHash,
+        tokenIds,
+      },
+    });
+  } catch (error) {
+    console.error("Lỗi khi lưu transaction transfer:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Lỗi server khi lưu transaction transfer",
       error: error.message,
     });
   }
