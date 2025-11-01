@@ -39,8 +39,12 @@ beforeEach(async () => {
   if (mongoose.connection.readyState === 1) {
     try {
       const collections = mongoose.connection.collections;
-      for (const key in collections) {
-        await collections[key].deleteMany({});
+      const collectionNames = Object.keys(collections);
+      for (const key of collectionNames) {
+        const collection = collections[key];
+        if (collection && typeof collection.deleteMany === 'function') {
+          await collection.deleteMany({});
+        }
       }
     } catch (error) {
       console.warn("Error cleaning collections:", error.message);
