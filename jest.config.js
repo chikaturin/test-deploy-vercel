@@ -3,6 +3,7 @@ export default {
   transform: {},
   moduleFileExtensions: ["js"],
   testMatch: ["**/tests/**/*.test.js"],
+  setupFilesAfterEnv: ["<rootDir>/tests/setup/testSetup.js"],
   collectCoverageFrom: [
     "controllers/**/*.js",
     "routes/**/*.js",
@@ -14,5 +15,6 @@ export default {
   ],
   coverageDirectory: "coverage",
   verbose: true,
+  testTimeout: 30000,
 };
 

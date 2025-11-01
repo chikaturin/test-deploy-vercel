@@ -1,6 +1,5 @@
 import request from "supertest";
 import app from "../setup/testApp.js";
-import "../setup/testSetup.js";
 import {
   createTestUser,
   createTestAdmin,
