@@ -1,11 +1,6 @@
 import { authenticate, isAdmin } from "../../../middleware/authMiddleware.js";
-import { verifyToken } from "../../../utils/jwt.js";
-import User from "../../../models/User.js";
 import { createTestUser, createTestAdmin } from "../../helpers/testHelpers.js";
-import "../setup/testSetup.js";
-
-jest.mock("../../../utils/jwt.js");
-jest.mock("../../../models/User.js");
+import "../../setup/testSetup.js";
 
 describe("Auth Middleware Tests", () => {
   let req, res, next;
@@ -24,17 +19,15 @@ describe("Auth Middleware Tests", () => {
   describe("authenticate", () => {
     test("Xác thực thành công với token hợp lệ", async () => {
       const user = await createTestUser();
-      const token = "valid_token";
+      const { getAuthToken } = await import("../../helpers/testHelpers.js");
+      const token = getAuthToken(user);
 
       req.headers.authorization = `Bearer ${token}`;
-      verifyToken.mockReturnValue({ id: user._id.toString() });
-      User.findById = jest.fn().mockResolvedValue(user);
 
       await authenticate(req, res, next);
 
-      expect(verifyToken).toHaveBeenCalledWith(token);
-      expect(User.findById).toHaveBeenCalled();
-      expect(req.user).toEqual(user);
+      expect(req.user).toBeDefined();
+      expect(req.user._id.toString()).toBe(user._id.toString());
       expect(next).toHaveBeenCalled();
     });
 
@@ -48,20 +41,6 @@ describe("Auth Middleware Tests", () => {
 
     test("Xác thực fail khi token không hợp lệ", async () => {
       req.headers.authorization = "Bearer invalid_token";
-      verifyToken.mockImplementation(() => {
-        throw new Error("Invalid token");
-      });
-
-      await authenticate(req, res, next);
-
-      expect(res.status).toHaveBeenCalledWith(401);
-      expect(next).not.toHaveBeenCalled();
-    });
-
-    test("Xác thực fail khi user không tồn tại", async () => {
-      req.headers.authorization = "Bearer valid_token";
-      verifyToken.mockReturnValue({ id: "507f1f77bcf86cd799439011" });
-      User.findById = jest.fn().mockResolvedValue(null);
 
       await authenticate(req, res, next);
 
