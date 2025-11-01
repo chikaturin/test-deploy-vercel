@@ -24,7 +24,10 @@ beforeAll(async () => {
 afterAll(async () => {
   if (mongoose.connection.readyState !== 0) {
     try {
-      await mongoose.connection.dropDatabase();
+      const collections = mongoose.connection.collections;
+      for (const key in collections) {
+        await collections[key].deleteMany({});
+      }
       await mongoose.connection.close();
     } catch (error) {
       console.warn("Error closing MongoDB connection:", error.message);
