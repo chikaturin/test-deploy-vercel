@@ -12,6 +12,10 @@ import {
   rejectRegistration,
   getRegistrationRequests,
   getRegistrationRequestById,
+  forgotPassword,
+  approvePasswordReset,
+  resetPassword,
+  getPasswordResetRequests,
 } from "../controllers/authController.js";
 import { authenticate, isAdmin } from "../middleware/authMiddleware.js";
 
@@ -40,6 +44,12 @@ router.get("/registration-requests/:requestId", authenticate, isAdmin, getRegist
 router.post("/registration-requests/:requestId/approve", authenticate, isAdmin, approveRegistration);
 
 router.post("/registration-requests/:requestId/reject", authenticate, isAdmin, rejectRegistration);
+
+// Quên mật khẩu và reset mật khẩu
+router.post("/forgot-password", forgotPassword);
+router.post("/reset-password", resetPassword);
+router.get("/password-reset-requests", authenticate, isAdmin, getPasswordResetRequests);
+router.post("/password-reset-requests/:resetRequestId/approve", authenticate, isAdmin, approvePasswordReset);
 
 export default router;
 
