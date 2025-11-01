@@ -76,7 +76,6 @@ describe("Auth API Tests", () => {
     test("Login thành công với email và password đúng", async () => {
       const user = await createTestUser({
         email: "login@test.com",
-        password: "password123",
       });
 
       const response = await request(app)
@@ -95,7 +94,6 @@ describe("Auth API Tests", () => {
     test("Login fail với password sai", async () => {
       await createTestUser({
         email: "login2@test.com",
-        password: "password123",
       });
 
       const response = await request(app)
@@ -124,7 +122,6 @@ describe("Auth API Tests", () => {
     test("Login fail với tài khoản pending", async () => {
       await createTestUser({
         email: "pending@test.com",
-        password: "password123",
         status: "pending",
       });
 
