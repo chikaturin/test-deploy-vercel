@@ -14,6 +14,8 @@ export const uploadFolderToIPFS = async (quantity, metadata) => {
       throw new Error("Quantity phải lớn hơn 0");
     }
 
+    // Tạo folder name với timestamp để unique
+    const folderName = `drug_package_${Date.now()}`;
     const formData = new FormData();
     
     for (let i = 1; i <= quantity; i++) {
@@ -31,8 +33,15 @@ export const uploadFolderToIPFS = async (quantity, metadata) => {
         type: "application/json",
       });
       
-      formData.append("file", metadataBlob, `${i}.json`);
+      // Sử dụng path với folder name để Pinata nhận diện đây là folder
+      formData.append("file", metadataBlob, `${folderName}/${i}.json`);
     }
+
+    // Thêm pinataOptions để Pinata biết đây là folder upload
+    const pinataOptions = JSON.stringify({
+      wrapWithDirectory: true,
+    });
+    formData.append("pinataOptions", pinataOptions);
 
     // Gọi Pinata API để upload folder
     // FormData sẽ tự động set Content-Type với boundary
