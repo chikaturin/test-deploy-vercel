@@ -1,0 +1,570 @@
+import CommercialInvoice from "../models/CommercialInvoice.js";
+import ProofOfPharmacy from "../models/ProofOfPharmacy.js";
+import DrugInfo from "../models/DrugInfo.js";
+import NFTInfo from "../models/NFTInfo.js";
+import User from "../models/User.js";
+import { getTrackingHistory } from "../services/blockchainService.js";
+
+// ============ QUẢN LÝ ĐƠN HÀNG TỪ DISTRIBUTOR ============
+
+// Xem danh sách đơn hàng từ distributor
+export const getInvoicesFromDistributor = async (req, res) => {
+  try {
+    const user = req.user;
+
+    if (user.role !== "pharmacy") {
+      return res.status(403).json({
+        success: false,
+        message: "Chỉ có pharmacy mới có thể xem đơn hàng",
+      });
+    }
+
+    const { page = 1, limit = 10, status, search } = req.query;
+
+    const filter = { toPharmacy: user._id };
+
+    if (status) {
+      filter.status = status;
+    }
+
+    if (search) {
+      filter.$or = [
+        { invoiceNumber: { $regex: search, $options: "i" } },
+      ];
+    }
+
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const skip = (pageNum - 1) * limitNum;
+
+    const invoices = await CommercialInvoice.find(filter)
+      .populate("fromDistributor", "username email fullName")
+      .populate("drug", "tradeName atcCode genericName")
+      .populate("nftInfo")
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limitNum);
+
+    const total = await CommercialInvoice.countDocuments(filter);
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        invoices,
+        pagination: {
+          page: pageNum,
+          limit: limitNum,
+          total,
+          pages: Math.ceil(total / limitNum),
+        },
+      },
+    });
+  } catch (error) {
+    console.error("Lỗi khi lấy danh sách đơn hàng:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Lỗi server khi lấy danh sách đơn hàng",
+      error: error.message,
+    });
+  }
+};
+
+// Xác nhận nhận hàng từ distributor (confirm-receipt)
+// Bước 1: Pharmacy xác nhận đã nhận hàng
+// Bước 2: Lưu vào database và set trạng thái "Đang chờ Distributor xác nhận"
+export const confirmReceipt = async (req, res) => {
+  try {
+    const user = req.user;
+
+    if (user.role !== "pharmacy") {
+      return res.status(403).json({
+        success: false,
+        message: "Chỉ có pharmacy mới có thể xác nhận nhận hàng",
+      });
+    }
+
+    const {
+      invoiceId,
+      receivedBy,
+      receiptAddress,
+      qualityCheck,
+      receiptDate,
+      receivedQuantity,
+    } = req.body;
+
+    if (!invoiceId) {
+      return res.status(400).json({
+        success: false,
+        message: "invoiceId là bắt buộc",
+      });
+    }
+
+    // Tìm invoice
+    const invoice = await CommercialInvoice.findById(invoiceId)
+      .populate("fromDistributor", "username email fullName walletAddress")
+      .populate("toPharmacy", "username email fullName walletAddress");
+
+    if (!invoice) {
+      return res.status(404).json({
+        success: false,
+        message: "Không tìm thấy invoice",
+      });
+    }
+
+    // Kiểm tra invoice thuộc về pharmacy này
+    const toPharmacyId = invoice.toPharmacy._id || invoice.toPharmacy;
+    if (toPharmacyId.toString() !== user._id.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: "Bạn không có quyền xác nhận invoice này",
+      });
+    }
+
+    // Kiểm tra invoice đã được sent chưa (distributor đã chuyển NFT)
+    if (invoice.status !== "sent") {
+      return res.status(400).json({
+        success: false,
+        message: `Invoice chưa được gửi. Trạng thái hiện tại: ${invoice.status}`,
+      });
+    }
+
+    // Tìm hoặc tạo Proof of Pharmacy
+    let proofOfPharmacy = await ProofOfPharmacy.findOne({
+      commercialInvoice: invoiceId,
+    });
+
+    if (proofOfPharmacy) {
+      proofOfPharmacy.status = "pending"; // Đang chờ Distributor xác nhận
+      if (receivedBy) proofOfPharmacy.receivedBy = receivedBy;
+      if (receiptAddress) proofOfPharmacy.receiptAddress = receiptAddress;
+      if (qualityCheck) proofOfPharmacy.qualityCheck = qualityCheck;
+      if (receiptDate) proofOfPharmacy.receiptDate = new Date(receiptDate);
+      if (receivedQuantity) proofOfPharmacy.receivedQuantity = receivedQuantity;
+    } else {
+      // Tạo mới proof of pharmacy
+      proofOfPharmacy = new ProofOfPharmacy({
+        fromDistributor: invoice.fromDistributor._id,
+        toPharmacy: user._id,
+        commercialInvoice: invoiceId,
+        status: "pending", // Đang chờ Distributor xác nhận
+        receivedBy,
+        receiptAddress,
+        qualityCheck,
+        receiptDate: receiptDate ? new Date(receiptDate) : new Date(),
+        receivedQuantity: receivedQuantity || invoice.quantity,
+        drug: invoice.drug,
+        nftInfo: invoice.nftInfo,
+      });
+    }
+
+    await proofOfPharmacy.save();
+
+    // Cập nhật CommercialInvoice để tham chiếu đến ProofOfPharmacy
+    invoice.proofOfPharmacy = proofOfPharmacy._id;
+    await invoice.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Đã xác nhận nhận hàng thành công. Đang chờ Distributor xác nhận quyền NFT.",
+      data: {
+        proofOfPharmacy,
+        invoice,
+      },
+    });
+  } catch (error) {
+    console.error("Lỗi khi xác nhận nhận hàng:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Lỗi server khi xác nhận nhận hàng",
+      error: error.message,
+    });
+  }
+};
+
+// ============ LỊCH SỬ PHÂN PHỐI ============
+
+// Xem lịch sử phân phối thuốc
+export const getDistributionHistory = async (req, res) => {
+  try {
+    const user = req.user;
+
+    if (user.role !== "pharmacy") {
+      return res.status(403).json({
+        success: false,
+        message: "Chỉ có pharmacy mới có thể xem lịch sử phân phối",
+      });
+    }
+
+    const { page = 1, limit = 10, status, search } = req.query;
+
+    const filter = { toPharmacy: user._id };
+
+    if (status) {
+      filter.status = status;
+    }
+
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const skip = (pageNum - 1) * limitNum;
+
+    const proofs = await ProofOfPharmacy.find(filter)
+      .populate("fromDistributor", "username email fullName")
+      .populate("commercialInvoice")
+      .populate("drug", "tradeName atcCode")
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limitNum);
+
+    const total = await ProofOfPharmacy.countDocuments(filter);
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        distributions: proofs,
+        pagination: {
+          page: pageNum,
+          limit: limitNum,
+          total,
+          pages: Math.ceil(total / limitNum),
+        },
+      },
+    });
+  } catch (error) {
+    console.error("Lỗi khi lấy lịch sử phân phối:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Lỗi server khi lấy lịch sử phân phối",
+      error: error.message,
+    });
+  }
+};
+
+// ============ THỐNG KÊ ============
+
+// Thống kê các trạng thái, đơn thuốc được gửi đến, lượt chuyển giao
+export const getStatistics = async (req, res) => {
+  try {
+    const user = req.user;
+
+    if (user.role !== "pharmacy") {
+      return res.status(403).json({
+        success: false,
+        message: "Chỉ có pharmacy mới có thể xem thống kê",
+      });
+    }
+
+    // Thống kê đơn hàng từ distributor
+    const totalInvoices = await CommercialInvoice.countDocuments({
+      toPharmacy: user._id,
+    });
+
+    const invoiceStatusStats = {
+      draft: await CommercialInvoice.countDocuments({
+        toPharmacy: user._id,
+        status: "draft",
+      }),
+      issued: await CommercialInvoice.countDocuments({
+        toPharmacy: user._id,
+        status: "issued",
+      }),
+      sent: await CommercialInvoice.countDocuments({
+        toPharmacy: user._id,
+        status: "sent",
+      }),
+      paid: await CommercialInvoice.countDocuments({
+        toPharmacy: user._id,
+        status: "paid",
+      }),
+      cancelled: await CommercialInvoice.countDocuments({
+        toPharmacy: user._id,
+        status: "cancelled",
+      }),
+    };
+
+    // Thống kê lịch sử nhận hàng
+    const totalReceipts = await ProofOfPharmacy.countDocuments({
+      toPharmacy: user._id,
+    });
+
+    const receiptStatusStats = {
+      pending: await ProofOfPharmacy.countDocuments({
+        toPharmacy: user._id,
+        status: "pending",
+      }),
+      received: await ProofOfPharmacy.countDocuments({
+        toPharmacy: user._id,
+        status: "received",
+      }),
+      verified: await ProofOfPharmacy.countDocuments({
+        toPharmacy: user._id,
+        status: "verified",
+      }),
+      completed: await ProofOfPharmacy.countDocuments({
+        toPharmacy: user._id,
+        status: "completed",
+      }),
+      rejected: await ProofOfPharmacy.countDocuments({
+        toPharmacy: user._id,
+        status: "rejected",
+      }),
+    };
+
+    // Thống kê NFT đã nhận
+    const nfts = await NFTInfo.find({
+      owner: user._id,
+    });
+
+    const nftStatusStats = {
+      minted: nfts.filter((nft) => nft.status === "minted").length,
+      transferred: nfts.filter((nft) => nft.status === "transferred").length,
+      sold: nfts.filter((nft) => nft.status === "sold").length,
+      expired: nfts.filter((nft) => nft.status === "expired").length,
+      recalled: nfts.filter((nft) => nft.status === "recalled").length,
+    };
+
+    // Thống kê lượt chuyển giao (số lượng đơn hàng đã nhận)
+    const totalTransfers = totalReceipts;
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        invoices: {
+          total: totalInvoices,
+          byStatus: invoiceStatusStats,
+        },
+        receipts: {
+          total: totalReceipts,
+          byStatus: receiptStatusStats,
+        },
+        transfers: {
+          total: totalTransfers,
+        },
+        nfts: {
+          total: nfts.length,
+          byStatus: nftStatusStats,
+        },
+      },
+    });
+  } catch (error) {
+    console.error("Lỗi khi lấy thống kê:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Lỗi server khi lấy thống kê",
+      error: error.message,
+    });
+  }
+};
+
+// ============ THEO DÕI HÀNH TRÌNH ============
+
+// Theo dõi hành trình thuốc qua NFT ID
+export const trackDrugByNFTId = async (req, res) => {
+  try {
+    const user = req.user;
+    const { tokenId } = req.params;
+
+    if (!tokenId) {
+      return res.status(400).json({
+        success: false,
+        message: "tokenId là bắt buộc",
+      });
+    }
+
+    // Tìm NFT
+    const nft = await NFTInfo.findOne({ tokenId })
+      .populate("drug", "tradeName atcCode genericName")
+      .populate("owner", "username email fullName walletAddress")
+      .populate("proofOfProduction");
+
+    if (!nft) {
+      return res.status(404).json({
+        success: false,
+        message: "Không tìm thấy NFT với tokenId này",
+      });
+    }
+
+    // Lấy lịch sử từ blockchain
+    let blockchainHistory = [];
+    try {
+      blockchainHistory = await getTrackingHistory(tokenId);
+    } catch (error) {
+      console.error("Lỗi khi lấy lịch sử blockchain:", error);
+    }
+
+    // Tìm các invoice liên quan
+    const commercialInvoice = await CommercialInvoice.findOne({
+      toPharmacy: user._id,
+      nftInfo: nft._id,
+    })
+      .populate("fromDistributor", "username email fullName walletAddress")
+      .populate("toPharmacy", "username email fullName walletAddress");
+
+    const proofOfPharmacy = await ProofOfPharmacy.findOne({
+      toPharmacy: user._id,
+      nftInfo: nft._id,
+    })
+      .populate("fromDistributor", "username email fullName");
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        nft,
+        blockchainHistory,
+        commercialInvoice,
+        proofOfPharmacy,
+      },
+    });
+  } catch (error) {
+    console.error("Lỗi khi theo dõi hành trình:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Lỗi server khi theo dõi hành trình",
+      error: error.message,
+    });
+  }
+};
+
+// ============ QUẢN LÝ THUỐC ============
+
+// Xem danh sách thuốc
+export const getDrugs = async (req, res) => {
+  try {
+    const user = req.user;
+
+    if (user.role !== "pharmacy") {
+      return res.status(403).json({
+        success: false,
+        message: "Chỉ có pharmacy mới có thể xem danh sách thuốc",
+      });
+    }
+
+    const { page = 1, limit = 10, search, status } = req.query;
+
+    const filter = { status: status || "active" };
+
+    if (search) {
+      filter.$or = [
+        { tradeName: { $regex: search, $options: "i" } },
+        { genericName: { $regex: search, $options: "i" } },
+        { atcCode: { $regex: search, $options: "i" } },
+      ];
+    }
+
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const skip = (pageNum - 1) * limitNum;
+
+    const drugs = await DrugInfo.find(filter)
+      .populate("manufacturer", "name")
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limitNum);
+
+    const total = await DrugInfo.countDocuments(filter);
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        drugs,
+        pagination: {
+          page: pageNum,
+          limit: limitNum,
+          total,
+          pages: Math.ceil(total / limitNum),
+        },
+      },
+    });
+  } catch (error) {
+    console.error("Lỗi khi lấy danh sách thuốc:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Lỗi server khi lấy danh sách thuốc",
+      error: error.message,
+    });
+  }
+};
+
+// Tìm kiếm thuốc theo ATC code
+export const searchDrugByATCCode = async (req, res) => {
+  try {
+    const user = req.user;
+
+    if (user.role !== "pharmacy") {
+      return res.status(403).json({
+        success: false,
+        message: "Chỉ có pharmacy mới có thể tìm kiếm thuốc",
+      });
+    }
+
+    const { atcCode } = req.query;
+
+    if (!atcCode) {
+      return res.status(400).json({
+        success: false,
+        message: "atcCode là bắt buộc",
+      });
+    }
+
+    const drug = await DrugInfo.findOne({ atcCode })
+      .populate("manufacturer", "name licenseNo taxCode");
+
+    if (!drug) {
+      return res.status(404).json({
+        success: false,
+        message: "Không tìm thấy thuốc với ATC code này",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: drug,
+    });
+  } catch (error) {
+    console.error("Lỗi khi tìm kiếm thuốc:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Lỗi server khi tìm kiếm thuốc",
+      error: error.message,
+    });
+  }
+};
+
+// ============ QUẢN LÝ THÔNG TIN CÁ NHÂN ============
+
+// Xem thông tin cá nhân (không được chỉnh sửa)
+export const getPharmacyProfile = async (req, res) => {
+  try {
+    const userId = req.user._id;
+
+    const user = await User.findById(userId)
+      .select("-password")
+      .populate("pharmacy", "name licenseNo taxCode status address country contactEmail contactPhone walletAddress");
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "Không tìm thấy người dùng",
+      });
+    }
+
+    if (user.role !== "pharmacy") {
+      return res.status(403).json({
+        success: false,
+        message: "Chỉ có pharmacy mới có thể xem profile này",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: user,
+    });
+  } catch (error) {
+    console.error("Lỗi khi lấy thông tin profile:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Lỗi server khi lấy thông tin profile",
+      error: error.message,
+    });
+  }
+};
+
