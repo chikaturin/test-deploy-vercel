@@ -1,14 +1,11 @@
 import express from "express";
 import {
-  // Quản lý thuốc
   addDrug,
   updateDrug,
   deleteDrug,
   getDrugs,
   getDrugById,
   searchDrugByATCCode,
-  
-  // Quản lý sản xuất và phân phối
   uploadDrugPackageToIPFS,
   saveMintedNFTs,
   transferToDistributor,
@@ -16,11 +13,7 @@ import {
   getProductionHistory,
   getTransferHistory,
   getStatistics,
-  
-  // Quản lý thông tin cá nhân
   getPharmaCompanyInfo,
-  
-  // Danh sách distributors
   getDistributors,
 } from "../controllers/pharmaCompanyController.js";
 import { authenticate, authorize } from "../middleware/authMiddleware.js";
