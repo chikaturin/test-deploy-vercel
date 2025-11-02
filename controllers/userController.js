@@ -2,7 +2,15 @@ import User from "../models/User.js";
 import PharmaCompany from "../models/PharmaCompany.js";
 import Distributor from "../models/Distributor.js";
 import Pharmacy from "../models/Pharmacy.js";
+import NFTInfo from "../models/NFTInfo.js";
+import DrugInfo from "../models/DrugInfo.js";
+import ManufacturerInvoice from "../models/ManufacturerInvoice.js";
+import CommercialInvoice from "../models/CommercialInvoice.js";
+import ProofOfProduction from "../models/ProofOfProduction.js";
+import ProofOfDistribution from "../models/ProofOfDistribution.js";
+import ProofOfPharmacy from "../models/ProofOfPharmacy.js";
 import bcrypt from "bcryptjs";
+import { getTrackingHistory } from "../services/blockchainService.js";
 
 export const getAllUsers = async (req, res) => {
   try {
@@ -380,6 +388,351 @@ export const getUserStats = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Lỗi server khi lấy thống kê người dùng",
+      error: error.message,
+    });
+  }
+};
+
+// ============ TRA CỨU THÔNG TIN ============
+
+// Theo dõi hành trình thuốc qua NFT ID (NFT Tracking)
+// Cho phép user tra cứu hành trình của thuốc thông qua tokenId
+export const trackDrugByNFTId = async (req, res) => {
+  try {
+    const { tokenId } = req.params;
+
+    if (!tokenId) {
+      return res.status(400).json({
+        success: false,
+        message: "tokenId là bắt buộc",
+      });
+    }
+
+    // Tìm NFT trong database
+    const nft = await NFTInfo.findOne({ tokenId })
+      .populate("drug", "tradeName atcCode genericName dosageForm strength packaging")
+      .populate("owner", "username email fullName walletAddress")
+      .populate("proofOfProduction");
+
+    if (!nft) {
+      return res.status(404).json({
+        success: false,
+        message: "Không tìm thấy NFT với tokenId này",
+      });
+    }
+
+    // Lấy lịch sử từ blockchain
+    let blockchainHistory = [];
+    try {
+      blockchainHistory = await getTrackingHistory(tokenId);
+    } catch (error) {
+      console.error("Lỗi khi lấy lịch sử blockchain:", error);
+    }
+
+    // Tìm các invoice và proof liên quan trong supply chain
+    const manufacturerInvoice = await ManufacturerInvoice.findOne({
+      nftInfo: nft._id,
+    })
+      .populate("fromManufacturer", "username email fullName walletAddress")
+      .populate("toDistributor", "username email fullName walletAddress");
+
+    const proofOfDistribution = await ProofOfDistribution.findOne({
+      manufacturerInvoice: manufacturerInvoice?._id,
+    })
+      .populate("fromManufacturer", "username email fullName")
+      .populate("toDistributor", "username email fullName");
+
+    const commercialInvoice = await CommercialInvoice.findOne({
+      nftInfo: nft._id,
+    })
+      .populate("fromDistributor", "username email fullName walletAddress")
+      .populate("toPharmacy", "username email fullName walletAddress");
+
+    const proofOfPharmacy = await ProofOfPharmacy.findOne({
+      commercialInvoice: commercialInvoice?._id,
+    })
+      .populate("fromDistributor", "username email fullName")
+      .populate("toPharmacy", "username email fullName");
+
+    // Tạo chuỗi hành trình từ các thông tin đã tìm được
+    const journey = [];
+    
+    if (nft.proofOfProduction) {
+      const production = await ProofOfProduction.findById(nft.proofOfProduction)
+        .populate("manufacturer", "name");
+      if (production) {
+        journey.push({
+          stage: "manufacturing",
+          description: "Sản xuất",
+          manufacturer: production.manufacturer?.name || "N/A",
+          date: production.mfgDate || production.createdAt,
+          details: {
+            quantity: production.quantity,
+            mfgDate: production.mfgDate,
+          },
+        });
+      }
+    }
+
+    if (manufacturerInvoice) {
+      journey.push({
+        stage: "transfer_to_distributor",
+        description: "Chuyển giao cho Nhà phân phối",
+        from: manufacturerInvoice.fromManufacturer?.fullName || manufacturerInvoice.fromManufacturer?.username || "N/A",
+        to: manufacturerInvoice.toDistributor?.fullName || manufacturerInvoice.toDistributor?.username || "N/A",
+        date: manufacturerInvoice.createdAt,
+        invoiceNumber: manufacturerInvoice.invoiceNumber,
+      });
+    }
+
+    if (proofOfDistribution) {
+      journey.push({
+        stage: "distributor_received",
+        description: "Nhà phân phối đã nhận hàng",
+        date: proofOfDistribution.distributionDate || proofOfDistribution.createdAt,
+        status: proofOfDistribution.status,
+      });
+    }
+
+    if (commercialInvoice) {
+      journey.push({
+        stage: "transfer_to_pharmacy",
+        description: "Chuyển giao cho Nhà thuốc",
+        from: commercialInvoice.fromDistributor?.fullName || commercialInvoice.fromDistributor?.username || "N/A",
+        to: commercialInvoice.toPharmacy?.fullName || commercialInvoice.toPharmacy?.username || "N/A",
+        date: commercialInvoice.createdAt,
+        invoiceNumber: commercialInvoice.invoiceNumber,
+      });
+    }
+
+    if (proofOfPharmacy) {
+      journey.push({
+        stage: "pharmacy_received",
+        description: "Nhà thuốc đã nhận hàng",
+        date: proofOfPharmacy.receiptDate || proofOfPharmacy.createdAt,
+        status: proofOfPharmacy.status,
+        supplyChainCompleted: proofOfPharmacy.supplyChainCompleted,
+      });
+    }
+
+    // Thông tin NFT cơ bản (public info)
+    const nftInfo = {
+      tokenId: nft.tokenId,
+      serialNumber: nft.serialNumber,
+      batchNumber: nft.batchNumber,
+      drug: {
+        tradeName: nft.drug?.tradeName,
+        atcCode: nft.drug?.atcCode,
+        genericName: nft.drug?.genericName,
+        dosageForm: nft.drug?.dosageForm,
+        strength: nft.drug?.strength,
+        packaging: nft.drug?.packaging,
+      },
+      mfgDate: nft.mfgDate,
+      expDate: nft.expDate,
+      status: nft.status,
+      currentOwner: nft.owner ? {
+        username: nft.owner.username,
+        fullName: nft.owner.fullName,
+      } : null,
+    };
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        nft: nftInfo,
+        blockchainHistory,
+        journey,
+        supplyChain: {
+          manufacturer: manufacturerInvoice?.fromManufacturer ? {
+            name: manufacturerInvoice.fromManufacturer.fullName || manufacturerInvoice.fromManufacturer.username,
+            email: manufacturerInvoice.fromManufacturer.email,
+          } : null,
+          distributor: commercialInvoice?.fromDistributor ? {
+            name: commercialInvoice.fromDistributor.fullName || commercialInvoice.fromDistributor.username,
+            email: commercialInvoice.fromDistributor.email,
+          } : null,
+          pharmacy: commercialInvoice?.toPharmacy ? {
+            name: commercialInvoice.toPharmacy.fullName || commercialInvoice.toPharmacy.username,
+            email: commercialInvoice.toPharmacy.email,
+          } : null,
+        },
+      },
+    });
+  } catch (error) {
+    console.error("Lỗi khi theo dõi hành trình:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Lỗi server khi theo dõi hành trình",
+      error: error.message,
+    });
+  }
+};
+
+// Xem thông tin thuốc (có thể bị giới hạn, cần xác thực)
+// Cho phép user xem thông tin thuốc công khai, nhưng một số thông tin nhạy cảm có thể bị ẩn
+export const getDrugInfo = async (req, res) => {
+  try {
+    const { drugId, atcCode } = req.query;
+    const user = req.user; // Cần xác thực
+
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        message: "Cần đăng nhập để xem thông tin thuốc",
+      });
+    }
+
+    let drug;
+
+    if (drugId) {
+      drug = await DrugInfo.findById(drugId)
+        .populate("manufacturer", "name licenseNo country");
+    } else if (atcCode) {
+      drug = await DrugInfo.findOne({ atcCode })
+        .populate("manufacturer", "name licenseNo country");
+    } else {
+      return res.status(400).json({
+        success: false,
+        message: "Vui lòng cung cấp drugId hoặc atcCode",
+      });
+    }
+
+    if (!drug) {
+      return res.status(404).json({
+        success: false,
+        message: "Không tìm thấy thông tin thuốc",
+      });
+    }
+
+    // Thông tin công khai cho user
+    const publicInfo = {
+      id: drug._id,
+      tradeName: drug.tradeName,
+      genericName: drug.genericName,
+      atcCode: drug.atcCode,
+      dosageForm: drug.dosageForm,
+      strength: drug.strength,
+      route: drug.route,
+      packaging: drug.packaging,
+      storage: drug.storage,
+      warnings: drug.warnings,
+      activeIngredients: drug.activeIngredients,
+      manufacturer: drug.manufacturer ? {
+        name: drug.manufacturer.name,
+        country: drug.manufacturer.country,
+      } : null,
+      status: drug.status,
+    };
+
+    // Nếu user là admin, pharma_company, distributor hoặc pharmacy, có thể xem thêm thông tin
+    let additionalInfo = null;
+    if (["system_admin", "pharma_company", "distributor", "pharmacy"].includes(user.role)) {
+      additionalInfo = {
+        manufacturer: drug.manufacturer ? {
+          name: drug.manufacturer.name,
+          licenseNo: drug.manufacturer.licenseNo,
+          country: drug.manufacturer.country,
+        } : null,
+      };
+    }
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        ...publicInfo,
+        ...(additionalInfo && { additionalInfo }),
+      },
+    });
+  } catch (error) {
+    console.error("Lỗi khi lấy thông tin thuốc:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Lỗi server khi lấy thông tin thuốc",
+      error: error.message,
+    });
+  }
+};
+
+// Xem danh sách thuốc (có phân trang và tìm kiếm)
+// Cho phép user tìm kiếm thuốc với thông tin công khai
+export const searchDrugs = async (req, res) => {
+  try {
+    const user = req.user; // Cần xác thực
+
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        message: "Cần đăng nhập để tìm kiếm thuốc",
+      });
+    }
+
+    const { page = 1, limit = 10, search, atcCode, status } = req.query;
+
+    const filter = { status: status || "active" };
+
+    if (search) {
+      filter.$or = [
+        { tradeName: { $regex: search, $options: "i" } },
+        { genericName: { $regex: search, $options: "i" } },
+        { atcCode: { $regex: search, $options: "i" } },
+      ];
+    }
+
+    if (atcCode) {
+      filter.atcCode = { $regex: atcCode, $options: "i" };
+    }
+
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const skip = (pageNum - 1) * limitNum;
+
+    const drugs = await DrugInfo.find(filter)
+      .populate("manufacturer", "name country")
+      .select("tradeName genericName atcCode dosageForm strength route packaging storage warnings activeIngredients status manufacturer")
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limitNum);
+
+    const total = await DrugInfo.countDocuments(filter);
+
+    // Chỉ trả về thông tin công khai
+    const publicDrugs = drugs.map((drug) => ({
+      id: drug._id,
+      tradeName: drug.tradeName,
+      genericName: drug.genericName,
+      atcCode: drug.atcCode,
+      dosageForm: drug.dosageForm,
+      strength: drug.strength,
+      route: drug.route,
+      packaging: drug.packaging,
+      storage: drug.storage,
+      warnings: drug.warnings,
+      activeIngredients: drug.activeIngredients,
+      manufacturer: drug.manufacturer ? {
+        name: drug.manufacturer.name,
+        country: drug.manufacturer.country,
+      } : null,
+      status: drug.status,
+    }));
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        drugs: publicDrugs,
+        pagination: {
+          page: pageNum,
+          limit: limitNum,
+          total,
+          pages: Math.ceil(total / limitNum),
+        },
+      },
+    });
+  } catch (error) {
+    console.error("Lỗi khi tìm kiếm thuốc:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Lỗi server khi tìm kiếm thuốc",
       error: error.message,
     });
   }
