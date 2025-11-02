@@ -5,6 +5,8 @@ import authRoutes from "./routes/authRoutes.js";
 import userRoutes from "./routes/userRoutes.js";
 import pharmaCompanyRoutes from "./routes/pharmaCompanyRoutes.js";
 import distributorRoutes from "./routes/distributorRoutes.js";
+import pharmacyRoutes from "./routes/pharmacyRoutes.js";
+import { listenToDistributorToPharmacyEvent } from "./services/eventListenerService.js";
 
 dotenv.config();
 
@@ -19,6 +21,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/pharma-company", pharmaCompanyRoutes);
 app.use("/api/distributor", distributorRoutes);
+app.use("/api/pharmacy", pharmacyRoutes);
 
 app.get("/", (req, res) => {
   res.json({ message: "Drug Traceability Backend API" });
@@ -31,6 +34,19 @@ mongoose
     
     app.listen(PORT, () => {
       console.log(`Server đang chạy trên port ${PORT}`);
+      
+      // Khởi động event listener sau khi server đã chạy
+      try {
+        listenToDistributorToPharmacyEvent()
+          .then(() => {
+            console.log("Event listener đã được khởi động thành công");
+          })
+          .catch((error) => {
+            console.error("Lỗi khi khởi động event listener:", error);
+          });
+      } catch (error) {
+        console.error("Lỗi khi khởi động event listener:", error);
+      }
     });
   })
   .catch((error) => {
