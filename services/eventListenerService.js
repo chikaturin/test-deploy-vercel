@@ -182,10 +182,12 @@ export const listenToDistributorToPharmacyEvent = async () => {
       }
     });
 
-    // Xử lý lỗi khi lắng nghe event
-    myNFTContract.on("error", (error) => {
-      console.error("Lỗi khi lắng nghe event:", error);
-    });
+    // Xử lý lỗi từ provider (network errors, connection issues, etc.)
+    if (provider) {
+      provider.on("error", (error) => {
+        console.error("Lỗi từ blockchain provider:", error);
+      });
+    }
 
     return true;
   } catch (error) {
