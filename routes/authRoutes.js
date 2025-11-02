@@ -14,6 +14,7 @@ import {
   getRegistrationRequestById,
   forgotPassword,
   approvePasswordReset,
+  rejectPasswordReset,
   resetPassword,
   getPasswordResetRequests,
 } from "../controllers/authController.js";
@@ -50,6 +51,7 @@ router.post("/forgot-password", forgotPassword);
 router.post("/reset-password", resetPassword);
 router.get("/password-reset-requests", authenticate, isAdmin, getPasswordResetRequests);
 router.post("/password-reset-requests/:resetRequestId/approve", authenticate, isAdmin, approvePasswordReset);
+router.post("/password-reset-requests/:resetRequestId/reject", authenticate, isAdmin, rejectPasswordReset);
 
 export default router;
 

@@ -28,6 +28,35 @@ const PasswordResetSchema = new mongoose.Schema(
       type: String,
       required: false,
     },
+    // Thông tin xác thực cho pharma_company, distributor, pharmacy
+    verificationInfo: {
+      licenseNo: {
+        type: String,
+        required: false,
+      },
+      taxCode: {
+        type: String,
+        required: false,
+      },
+    },
+    status: {
+      type: String,
+      enum: ["pending", "approved", "rejected"],
+      default: "pending",
+    },
+    reviewedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      required: false,
+    },
+    reviewedAt: {
+      type: Date,
+      required: false,
+    },
+    newPassword: {
+      type: String,
+      required: false,
+    }, // Mật khẩu mới được tạo khi admin duyệt
   },
   { timestamps: true }
 );

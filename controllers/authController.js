@@ -12,6 +12,11 @@ import {
   addDistributorToBlockchain,
   addPharmacyToBlockchain,
 } from "../services/blockchainService.js";
+import {
+  sendPasswordResetEmail,
+  sendPasswordResetApprovedEmail,
+  sendNewPasswordEmail,
+} from "../services/emailService.js";
 
 export const login = async (req, res) => {
   try {
@@ -864,10 +869,10 @@ export const getRegistrationRequestById = async (req, res) => {
   }
 };
 
-// Quên mật khẩu - tạo yêu cầu reset (cần admin xác nhận)
+// Quên mật khẩu - tạo yêu cầu reset (cần admin xác nhận cho pharma_company, distributor, pharmacy)
 export const forgotPassword = async (req, res) => {
   try {
-    const { email } = req.body;
+    const { email, licenseNo, taxCode } = req.body;
 
     if (!email) {
       return res.status(400).json({
@@ -876,7 +881,7 @@ export const forgotPassword = async (req, res) => {
       });
     }
 
-    const user = await User.findOne({ email });
+    const user = await User.findOne({ email }).populate("pharmaCompany").populate("distributor").populate("pharmacy");
     if (!user) {
       // Không tiết lộ email có tồn tại hay không vì lý do bảo mật
       return res.status(200).json({
@@ -885,8 +890,40 @@ export const forgotPassword = async (req, res) => {
       });
     }
 
-    // Chỉ pharma_company cần admin xác nhận, các role khác thì không
-    if (user.role === "pharma_company") {
+    // pharma_company, distributor, pharmacy cần admin xác nhận và yêu cầu thông tin công ty
+    if (["pharma_company", "distributor", "pharmacy"].includes(user.role)) {
+      if (!licenseNo || !taxCode) {
+        return res.status(400).json({
+          success: false,
+          message: "Vui lòng cung cấp licenseNo và taxCode để xác thực",
+        });
+      }
+
+      // Xác thực thông tin công ty
+      let businessProfile = null;
+      if (user.role === "pharma_company" && user.pharmaCompany) {
+        businessProfile = user.pharmaCompany;
+      } else if (user.role === "distributor" && user.distributor) {
+        businessProfile = user.distributor;
+      } else if (user.role === "pharmacy" && user.pharmacy) {
+        businessProfile = user.pharmacy;
+      }
+
+      if (!businessProfile) {
+        return res.status(404).json({
+          success: false,
+          message: "Không tìm thấy thông tin công ty của người dùng",
+        });
+      }
+
+      // Kiểm tra licenseNo và taxCode có khớp không
+      if (businessProfile.licenseNo !== licenseNo || businessProfile.taxCode !== taxCode) {
+        return res.status(400).json({
+          success: false,
+          message: "Thông tin licenseNo hoặc taxCode không đúng",
+        });
+      }
+
       // Tạo token reset
       const resetToken = crypto.randomBytes(32).toString("hex");
       const expiresAt = new Date();
@@ -895,17 +932,22 @@ export const forgotPassword = async (req, res) => {
       // Xóa các token cũ chưa sử dụng
       await PasswordReset.deleteMany({
         user: user._id,
+        status: "pending",
         used: false,
-        expiresAt: { $gt: new Date() },
       });
 
-      // Tạo password reset request
+      // Tạo password reset request với thông tin xác thực
       const passwordReset = new PasswordReset({
         user: user._id,
         token: resetToken,
         expiresAt,
         ipAddress: req.ip || req.connection.remoteAddress,
         userAgent: req.headers["user-agent"],
+        verificationInfo: {
+          licenseNo,
+          taxCode,
+        },
+        status: "pending",
       });
 
       await passwordReset.save();
@@ -919,7 +961,7 @@ export const forgotPassword = async (req, res) => {
         },
       });
     } else {
-      // Các role khác không cần admin xác nhận
+      // User thông thường không cần admin xác nhận
       const resetToken = crypto.randomBytes(32).toString("hex");
       const expiresAt = new Date();
       expiresAt.setHours(expiresAt.getHours() + 1); // Token hết hạn sau 1 giờ
@@ -940,13 +982,18 @@ export const forgotPassword = async (req, res) => {
 
       await passwordReset.save();
 
-      // Trong production, gửi email với reset token
-      // Ở đây chỉ trả về token (không nên làm vậy trong production)
+      // Gửi email với reset token
+      const resetUrl = `${process.env.FRONTEND_URL || "http://localhost:3000"}/reset-password?token=${resetToken}`;
+      try {
+        await sendPasswordResetEmail(user.email, resetToken, resetUrl);
+      } catch (emailError) {
+        console.error("Lỗi khi gửi email reset mật khẩu:", emailError);
+        // Vẫn trả về success để không tiết lộ thông tin về email
+      }
+
       return res.status(200).json({
         success: true,
         message: "Yêu cầu reset mật khẩu đã được tạo. Vui lòng kiểm tra email.",
-        // Trong production, KHÔNG trả về token trong response
-        // resetToken: resetToken, // CHỈ để test, xóa trong production
       });
     }
   } catch (error) {
@@ -959,7 +1006,7 @@ export const forgotPassword = async (req, res) => {
   }
 };
 
-// Admin xác nhận yêu cầu reset mật khẩu của pharma_company
+// Admin xác nhận yêu cầu reset mật khẩu của pharma_company, distributor, pharmacy
 export const approvePasswordReset = async (req, res) => {
   try {
     const adminUser = req.user;
@@ -973,7 +1020,16 @@ export const approvePasswordReset = async (req, res) => {
 
     const { resetRequestId } = req.params;
 
-    const passwordReset = await PasswordReset.findById(resetRequestId).populate("user");
+    const passwordReset = await PasswordReset.findById(resetRequestId)
+      .populate("user")
+      .populate({
+        path: "user",
+        populate: [
+          { path: "pharmaCompany" },
+          { path: "distributor" },
+          { path: "pharmacy" },
+        ],
+      });
 
     if (!passwordReset) {
       return res.status(404).json({
@@ -982,10 +1038,17 @@ export const approvePasswordReset = async (req, res) => {
       });
     }
 
-    if (passwordReset.used) {
+    if (passwordReset.status === "approved") {
       return res.status(400).json({
         success: false,
-        message: "Yêu cầu reset mật khẩu này đã được sử dụng",
+        message: "Yêu cầu reset mật khẩu này đã được duyệt",
+      });
+    }
+
+    if (passwordReset.status === "rejected") {
+      return res.status(400).json({
+        success: false,
+        message: "Yêu cầu reset mật khẩu này đã bị từ chối",
       });
     }
 
@@ -997,23 +1060,90 @@ export const approvePasswordReset = async (req, res) => {
     }
 
     const user = passwordReset.user;
-    if (user.role !== "pharma_company") {
+    if (!["pharma_company", "distributor", "pharmacy"].includes(user.role)) {
       return res.status(400).json({
         success: false,
-        message: "Yêu cầu reset mật khẩu này không thuộc về pharma_company",
+        message: "Yêu cầu reset mật khẩu này không thuộc về pharma_company, distributor hoặc pharmacy",
       });
     }
 
-    // Đánh dấu là đã được admin xác nhận (thông qua việc giữ nguyên token và expiresAt)
-    // Trong thực tế, có thể thêm trường "approvedBy" vào model
+    // Kiểm tra lại thông tin xác thực
+    if (passwordReset.verificationInfo && passwordReset.verificationInfo.licenseNo && passwordReset.verificationInfo.taxCode) {
+      let businessProfile = null;
+      if (user.role === "pharma_company" && user.pharmaCompany) {
+        businessProfile = user.pharmaCompany;
+      } else if (user.role === "distributor" && user.distributor) {
+        businessProfile = user.distributor;
+      } else if (user.role === "pharmacy" && user.pharmacy) {
+        businessProfile = user.pharmacy;
+      }
+
+      if (businessProfile) {
+        if (
+          businessProfile.licenseNo !== passwordReset.verificationInfo.licenseNo ||
+          businessProfile.taxCode !== passwordReset.verificationInfo.taxCode
+        ) {
+          return res.status(400).json({
+            success: false,
+            message: "Thông tin xác thực không khớp với thông tin trong hệ thống",
+          });
+        }
+      }
+    }
+
+    // Tạo mật khẩu mới ngẫu nhiên (8-12 ký tự: chữ hoa, chữ thường, số)
+    const generateRandomPassword = () => {
+      const length = Math.floor(Math.random() * 5) + 8; // 8-12 ký tự
+      const uppercase = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+      const lowercase = "abcdefghijklmnopqrstuvwxyz";
+      const numbers = "0123456789";
+      const all = uppercase + lowercase + numbers;
+      
+      let password = "";
+      // Đảm bảo có ít nhất 1 chữ hoa, 1 chữ thường, 1 số
+      password += uppercase[Math.floor(Math.random() * uppercase.length)];
+      password += lowercase[Math.floor(Math.random() * lowercase.length)];
+      password += numbers[Math.floor(Math.random() * numbers.length)];
+      
+      // Thêm các ký tự ngẫu nhiên còn lại
+      for (let i = password.length; i < length; i++) {
+        password += all[Math.floor(Math.random() * all.length)];
+      }
+      
+      // Xáo trộn password
+      return password.split("").sort(() => Math.random() - 0.5).join("");
+    };
+
+    const newPassword = generateRandomPassword();
+
+    // Hash và cập nhật mật khẩu mới cho user
+    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    user.password = hashedPassword;
+    await user.save();
+
+    // Cập nhật password reset request
+    passwordReset.status = "approved";
+    passwordReset.reviewedBy = adminUser._id;
+    passwordReset.reviewedAt = new Date();
+    passwordReset.used = true; // Đánh dấu đã được sử dụng (không cần dùng token nữa)
+    passwordReset.newPassword = newPassword; // Lưu mật khẩu mới (plaintext) để gửi email, sau đó có thể xóa
+    await passwordReset.save();
+
+    // Gửi email với mật khẩu mới
+    try {
+      await sendNewPasswordEmail(user.email, newPassword, user.username);
+      
+      // Xóa mật khẩu plaintext sau khi đã gửi email (bảo mật)
+      passwordReset.newPassword = undefined;
+      await passwordReset.save();
+    } catch (emailError) {
+      console.error("Lỗi khi gửi email mật khẩu mới:", emailError);
+      // Vẫn tiếp tục, nhưng log lỗi
+    }
 
     return res.status(200).json({
       success: true,
-      message: "Yêu cầu reset mật khẩu đã được admin xác nhận. Người dùng có thể sử dụng token để reset mật khẩu.",
-      data: {
-        resetToken: passwordReset.token,
-        expiresAt: passwordReset.expiresAt,
-      },
+      message: "Yêu cầu reset mật khẩu đã được admin duyệt. Mật khẩu mới đã được gửi đến email của người dùng.",
     });
   } catch (error) {
     console.error("Lỗi khi xác nhận yêu cầu reset mật khẩu:", error);
@@ -1092,6 +1222,68 @@ export const resetPassword = async (req, res) => {
   }
 };
 
+// Từ chối yêu cầu reset mật khẩu
+export const rejectPasswordReset = async (req, res) => {
+  try {
+    const adminUser = req.user;
+    
+    if (adminUser.role !== "system_admin") {
+      return res.status(403).json({
+        success: false,
+        message: "Chỉ có admin mới có thể từ chối yêu cầu reset mật khẩu",
+      });
+    }
+
+    const { resetRequestId } = req.params;
+    const { rejectionReason } = req.body;
+
+    const passwordReset = await PasswordReset.findById(resetRequestId).populate("user");
+
+    if (!passwordReset) {
+      return res.status(404).json({
+        success: false,
+        message: "Không tìm thấy yêu cầu reset mật khẩu",
+      });
+    }
+
+    if (passwordReset.status === "approved") {
+      return res.status(400).json({
+        success: false,
+        message: "Yêu cầu reset mật khẩu này đã được duyệt, không thể từ chối",
+      });
+    }
+
+    if (passwordReset.status === "rejected") {
+      return res.status(400).json({
+        success: false,
+        message: "Yêu cầu reset mật khẩu này đã bị từ chối",
+      });
+    }
+
+    passwordReset.status = "rejected";
+    passwordReset.reviewedBy = adminUser._id;
+    passwordReset.reviewedAt = new Date();
+    await passwordReset.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Yêu cầu reset mật khẩu đã bị từ chối",
+      data: {
+        id: passwordReset._id,
+        status: passwordReset.status,
+        rejectionReason: rejectionReason || "",
+      },
+    });
+  } catch (error) {
+    console.error("Lỗi khi từ chối yêu cầu reset mật khẩu:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Lỗi server khi từ chối yêu cầu reset mật khẩu",
+      error: error.message,
+    });
+  }
+};
+
 // Lấy danh sách yêu cầu reset mật khẩu (cho admin)
 export const getPasswordResetRequests = async (req, res) => {
   try {
@@ -1104,11 +1296,15 @@ export const getPasswordResetRequests = async (req, res) => {
       });
     }
 
-    const { used, expired } = req.query;
+    const { used, expired, status, role } = req.query;
     const filter = {};
 
     if (used !== undefined) {
       filter.used = used === "true";
+    }
+
+    if (status) {
+      filter.status = status;
     }
 
     if (expired === "true") {
@@ -1119,11 +1315,26 @@ export const getPasswordResetRequests = async (req, res) => {
 
     const requests = await PasswordReset.find(filter)
       .populate("user", "username email fullName role")
+      .populate("reviewedBy", "username email")
+      .populate({
+        path: "user",
+        populate: [
+          { path: "pharmaCompany", select: "name licenseNo taxCode" },
+          { path: "distributor", select: "name licenseNo taxCode" },
+          { path: "pharmacy", select: "name licenseNo taxCode" },
+        ],
+      })
       .sort({ createdAt: -1 });
+
+    // Filter theo role nếu có
+    let filteredRequests = requests;
+    if (role) {
+      filteredRequests = requests.filter(req => req.user && req.user.role === role);
+    }
 
     return res.status(200).json({
       success: true,
-      data: requests,
+      data: filteredRequests,
     });
   } catch (error) {
     console.error("Lỗi khi lấy danh sách yêu cầu reset mật khẩu:", error);
