@@ -6,6 +6,7 @@ import userRoutes from "./routes/userRoutes.js";
 import pharmaCompanyRoutes from "./routes/pharmaCompanyRoutes.js";
 import distributorRoutes from "./routes/distributorRoutes.js";
 import pharmacyRoutes from "./routes/pharmacyRoutes.js";
+import adminRoutes from "./routes/adminRoutes.js";
 import { listenToDistributorToPharmacyEvent } from "./services/eventListenerService.js";
 
 dotenv.config();
@@ -22,6 +23,7 @@ app.use("/api/users", userRoutes);
 app.use("/api/pharma-company", pharmaCompanyRoutes);
 app.use("/api/distributor", distributorRoutes);
 app.use("/api/pharmacy", pharmacyRoutes);
+app.use("/api/admin", adminRoutes);
 
 app.get("/", (req, res) => {
   res.json({ message: "Drug Traceability Backend API" });
