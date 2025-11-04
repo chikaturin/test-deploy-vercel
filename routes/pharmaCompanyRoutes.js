@@ -15,6 +15,7 @@ import {
   getStatistics,
   getPharmaCompanyInfo,
   getDistributors,
+  getAvailableTokensForProduction,
 } from "../controllers/pharmaCompanyController.js";
 import { authenticate, authorize } from "../middleware/authMiddleware.js";
 
@@ -45,6 +46,8 @@ router.post("/production/transfer", transferToDistributor);
 // Chuyển giao: Bước 2 - Lưu transactionHash sau khi FE gọi smart contract thành công
 router.post("/production/save-transfer", saveTransferTransaction);
 router.get("/production/history", getProductionHistory);
+// Danh sách tokenId còn khả dụng theo lô
+router.get("/production/:productionId/available-tokens", getAvailableTokensForProduction);
 router.get("/transfer/history", getTransferHistory);
 router.get("/statistics", getStatistics);
 

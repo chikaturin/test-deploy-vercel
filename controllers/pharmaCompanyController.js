@@ -543,6 +543,7 @@ export const saveMintedNFTs = async (req, res) => {
     const proofOfProduction = new ProofOfProduction({
       manufacturer: pharmaCompany._id,
       drug: drugId,
+      batchNumber: batchNumber || "",
       mfgDate: mfgDate ? new Date(mfgDate) : new Date(),
       expDate: expDate ? new Date(expDate) : null,
       quantity,
@@ -602,6 +603,7 @@ export const saveMintedNFTs = async (req, res) => {
 export const transferToDistributor = async (req, res) => {
   try {
     const user = req.user;
+    console.log("[transferToDistributor] request by=", user?._id?.toString());
 
     if (user.role !== "pharma_company") {
       return res.status(403).json({
@@ -640,6 +642,14 @@ export const transferToDistributor = async (req, res) => {
       notes,
     } = req.body;
 
+    console.log("[transferToDistributor] payload summary:", {
+      distributorId,
+      tokenIdsCount: Array.isArray(tokenIds) ? tokenIds.length : 0,
+      amountsCount: Array.isArray(amounts) ? amounts.length : 0,
+      invoiceNumber,
+      quantity,
+    });
+
     if (!distributorId || !tokenIds || !amounts) {
       return res.status(400).json({
         success: false,
@@ -677,6 +687,11 @@ export const transferToDistributor = async (req, res) => {
       status: "minted",
     });
 
+    console.log("[transferToDistributor] nft ownership check:", {
+      requestedTokenIds: tokenIds.length,
+      ownedMintedCount: nftInfos.length,
+    });
+
     if (nftInfos.length !== tokenIds.length) {
       return res.status(400).json({
         success: false,
@@ -702,6 +717,12 @@ export const transferToDistributor = async (req, res) => {
     });
 
     await manufacturerInvoice.save();
+
+    console.log("[transferToDistributor] invoice saved:", {
+      invoiceId: manufacturerInvoice._id?.toString(),
+      status: manufacturerInvoice.status,
+      distributorAddress: distributor.user.walletAddress,
+    });
 
     // Trả về thông tin để frontend có thể gọi smart contract
     // Frontend sẽ gọi: manufacturerTransferToDistributor(tokenIds, amounts, distributorAddress)
@@ -926,9 +947,12 @@ export const getProductionHistory = async (req, res) => {
         });
         const hasTransferred = nfts.some((nft) => nft.status === "transferred");
         const hasMinted = nfts.some((nft) => nft.status === "minted");
+        // Batch fallback: nếu production chưa có batchNumber, lấy từ 1 NFT bất kỳ
+        const inferredBatch = production.batchNumber || (nfts.find((n) => !!n.batchNumber)?.batchNumber || "");
 
         return {
           ...production.toObject(),
+          batchNumber: inferredBatch,
           transferStatus: hasTransferred ? "transferred" : hasMinted ? "pending" : "none",
           nftCount: nfts.length,
         };
@@ -1120,6 +1144,53 @@ export const getStatistics = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Lỗi server khi lấy thống kê",
+      error: error.message,
+    });
+  }
+};
+
+// Lấy danh sách tokenId còn khả dụng (status=minted) theo một proofOfProduction
+export const getAvailableTokensForProduction = async (req, res) => {
+  try {
+    const user = req.user;
+    const { productionId } = req.params;
+    console.log("[availableTokens] request by=", user?._id?.toString(), "productionId=", productionId);
+
+    if (user.role !== "pharma_company") {
+      return res.status(403).json({
+        success: false,
+        message: "Chỉ có pharma company mới có thể xem token khả dụng",
+      });
+    }
+
+    // Xác thực production tồn tại
+    const production = await ProofOfProduction.findById(productionId);
+    if (!production) {
+      return res.status(404).json({
+        success: false,
+        message: "Không tìm thấy lô sản xuất",
+      });
+    }
+
+    // Lấy các NFT thuộc production này, đang ở trạng thái minted và thuộc sở hữu manufacturer hiện tại
+    const nfts = await NFTInfo.find({
+      proofOfProduction: productionId,
+      owner: user._id,
+      status: "minted",
+    }).select("tokenId");
+
+    const availableTokenIds = nfts.map((n) => n.tokenId);
+    console.log("[availableTokens] minted tokens found=", availableTokenIds.length);
+
+    return res.status(200).json({
+      success: true,
+      data: { availableTokenIds },
+    });
+  } catch (error) {
+    console.error("Lỗi khi lấy token khả dụng:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Lỗi server khi lấy token khả dụng",
       error: error.message,
     });
   }

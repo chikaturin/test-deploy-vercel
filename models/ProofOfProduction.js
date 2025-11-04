@@ -24,6 +24,11 @@ const ProofOfProductionSchema = new mongoose.Schema(
       type: Number,
       required: false,
     },
+    batchNumber: {
+      type: String,
+      required: false,
+      index: true,
+    },
     qaInspector: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
