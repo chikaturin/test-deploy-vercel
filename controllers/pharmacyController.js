@@ -75,8 +75,18 @@ export const getInvoicesFromDistributor = async (req, res) => {
 export const confirmReceipt = async (req, res) => {
   try {
     const user = req.user;
+    console.log("[confirmReceipt] Bắt đầu:", {
+      userId: user._id,
+      userRole: user.role,
+      userEmail: user.email,
+      timestamp: new Date().toISOString(),
+    });
 
     if (user.role !== "pharmacy") {
+      console.log("[confirmReceipt] Lỗi: User không phải pharmacy:", {
+        userId: user._id,
+        userRole: user.role,
+      });
       return res.status(403).json({
         success: false,
         message: "Chỉ có pharmacy mới có thể xác nhận nhận hàng",
@@ -90,9 +100,23 @@ export const confirmReceipt = async (req, res) => {
       qualityCheck,
       receiptDate,
       receivedQuantity,
+      notes,
     } = req.body;
 
+    console.log("[confirmReceipt] Request body:", {
+      invoiceId,
+      receivedBy: receivedBy ? (typeof receivedBy === 'object' ? receivedBy : { raw: receivedBy }) : null,
+      receiptAddress: receiptAddress ? (typeof receiptAddress === 'object' ? receiptAddress : { raw: receiptAddress }) : null,
+      qualityCheck: qualityCheck ? (typeof qualityCheck === 'object' ? qualityCheck : { raw: qualityCheck }) : null,
+      receiptDate,
+      receivedQuantity,
+      notes,
+      receivedByType: typeof receivedBy,
+      receiptAddressType: typeof receiptAddress,
+    });
+
     if (!invoiceId) {
+      console.log("[confirmReceipt] Lỗi: Thiếu invoiceId");
       return res.status(400).json({
         success: false,
         message: "invoiceId là bắt buộc",
@@ -100,20 +124,37 @@ export const confirmReceipt = async (req, res) => {
     }
 
     // Tìm invoice
+    console.log("[confirmReceipt] Đang tìm invoice:", invoiceId);
     const invoice = await CommercialInvoice.findById(invoiceId)
       .populate("fromDistributor", "username email fullName walletAddress")
       .populate("toPharmacy", "username email fullName walletAddress");
 
     if (!invoice) {
+      console.log("[confirmReceipt] Lỗi: Không tìm thấy invoice:", invoiceId);
       return res.status(404).json({
         success: false,
         message: "Không tìm thấy invoice",
       });
     }
 
+    console.log("[confirmReceipt] Tìm thấy invoice:", {
+      invoiceId: invoice._id,
+      invoiceNumber: invoice.invoiceNumber,
+      status: invoice.status,
+      fromDistributorId: invoice.fromDistributor._id || invoice.fromDistributor,
+      toPharmacyId: invoice.toPharmacy._id || invoice.toPharmacy,
+    });
+
     // Kiểm tra invoice thuộc về pharmacy này
     const toPharmacyId = invoice.toPharmacy._id || invoice.toPharmacy;
+    console.log("[confirmReceipt] Kiểm tra quyền:", {
+      toPharmacyId: toPharmacyId.toString(),
+      userId: user._id.toString(),
+      match: toPharmacyId.toString() === user._id.toString(),
+    });
+
     if (toPharmacyId.toString() !== user._id.toString()) {
+      console.log("[confirmReceipt] Lỗi: Không có quyền xác nhận invoice này");
       return res.status(403).json({
         success: false,
         message: "Bạn không có quyền xác nhận invoice này",
@@ -121,7 +162,14 @@ export const confirmReceipt = async (req, res) => {
     }
 
     // Kiểm tra invoice đã được sent chưa (distributor đã chuyển NFT)
+    console.log("[confirmReceipt] Kiểm tra trạng thái invoice:", {
+      currentStatus: invoice.status,
+      requiredStatus: "sent",
+      isValid: invoice.status === "sent",
+    });
+
     if (invoice.status !== "sent") {
+      console.log("[confirmReceipt] Lỗi: Invoice chưa được gửi:", invoice.status);
       return res.status(400).json({
         success: false,
         message: `Invoice chưa được gửi. Trạng thái hiện tại: ${invoice.status}`,
@@ -129,20 +177,58 @@ export const confirmReceipt = async (req, res) => {
     }
 
     // Tìm hoặc tạo Proof of Pharmacy
+    console.log("[confirmReceipt] Đang tìm Proof of Pharmacy:", invoiceId);
     let proofOfPharmacy = await ProofOfPharmacy.findOne({
       commercialInvoice: invoiceId,
     });
 
     if (proofOfPharmacy) {
+      console.log("[confirmReceipt] Tìm thấy Proof of Pharmacy đã tồn tại:", {
+        proofId: proofOfPharmacy._id,
+        currentStatus: proofOfPharmacy.status,
+      });
+
+      console.log("[confirmReceipt] Dữ liệu trước khi cập nhật:", {
+        receivedBy: proofOfPharmacy.receivedBy,
+        receiptAddress: proofOfPharmacy.receiptAddress,
+        qualityCheck: proofOfPharmacy.qualityCheck,
+        receiptDate: proofOfPharmacy.receiptDate,
+        receivedQuantity: proofOfPharmacy.receivedQuantity,
+      });
+
       proofOfPharmacy.status = "pending"; // Đang chờ Distributor xác nhận
-      if (receivedBy) proofOfPharmacy.receivedBy = receivedBy;
-      if (receiptAddress) proofOfPharmacy.receiptAddress = receiptAddress;
-      if (qualityCheck) proofOfPharmacy.qualityCheck = qualityCheck;
-      if (receiptDate) proofOfPharmacy.receiptDate = new Date(receiptDate);
-      if (receivedQuantity) proofOfPharmacy.receivedQuantity = receivedQuantity;
+      if (receivedBy) {
+        console.log("[confirmReceipt] Cập nhật receivedBy:", {
+          old: proofOfPharmacy.receivedBy,
+          new: receivedBy,
+          newType: typeof receivedBy,
+        });
+        proofOfPharmacy.receivedBy = receivedBy;
+      }
+      if (receiptAddress) {
+        console.log("[confirmReceipt] Cập nhật receiptAddress:", {
+          old: proofOfPharmacy.receiptAddress,
+          new: receiptAddress,
+          newType: typeof receiptAddress,
+        });
+        proofOfPharmacy.receiptAddress = receiptAddress;
+      }
+      if (qualityCheck) {
+        console.log("[confirmReceipt] Cập nhật qualityCheck:", qualityCheck);
+        proofOfPharmacy.qualityCheck = qualityCheck;
+      }
+      if (receiptDate) {
+        console.log("[confirmReceipt] Cập nhật receiptDate:", receiptDate);
+        proofOfPharmacy.receiptDate = new Date(receiptDate);
+      }
+      if (receivedQuantity) {
+        console.log("[confirmReceipt] Cập nhật receivedQuantity:", receivedQuantity);
+        proofOfPharmacy.receivedQuantity = receivedQuantity;
+      }
     } else {
-      // Tạo mới proof of pharmacy
-      proofOfPharmacy = new ProofOfPharmacy({
+      console.log("[confirmReceipt] Tạo mới Proof of Pharmacy");
+      
+      const proofData = {
         fromDistributor: invoice.fromDistributor._id,
         toPharmacy: user._id,
         commercialInvoice: invoiceId,
@@ -154,14 +240,49 @@ export const confirmReceipt = async (req, res) => {
         receivedQuantity: receivedQuantity || invoice.quantity,
         drug: invoice.drug,
         nftInfo: invoice.nftInfo,
+      };
+
+      console.log("[confirmReceipt] Dữ liệu Proof of Pharmacy mới:", {
+        fromDistributor: proofData.fromDistributor,
+        toPharmacy: proofData.toPharmacy,
+        commercialInvoice: proofData.commercialInvoice,
+        status: proofData.status,
+        receivedBy: proofData.receivedBy,
+        receivedByType: typeof proofData.receivedBy,
+        receiptAddress: proofData.receiptAddress,
+        receiptAddressType: typeof proofData.receiptAddress,
+        qualityCheck: proofData.qualityCheck,
+        receiptDate: proofData.receiptDate,
+        receivedQuantity: proofData.receivedQuantity,
+        drug: proofData.drug,
+        nftInfo: proofData.nftInfo,
       });
+
+      // Tạo mới proof of pharmacy
+      proofOfPharmacy = new ProofOfPharmacy(proofData);
     }
 
+    console.log("[confirmReceipt] Đang lưu Proof of Pharmacy...");
     await proofOfPharmacy.save();
 
+    console.log("[confirmReceipt] Đã lưu Proof of Pharmacy:", {
+      proofId: proofOfPharmacy._id,
+      status: proofOfPharmacy.status,
+      receivedBy: proofOfPharmacy.receivedBy,
+      receiptAddress: proofOfPharmacy.receiptAddress,
+      receivedQuantity: proofOfPharmacy.receivedQuantity,
+    });
+
     // Cập nhật CommercialInvoice để tham chiếu đến ProofOfPharmacy
+    console.log("[confirmReceipt] Cập nhật CommercialInvoice...");
     invoice.proofOfPharmacy = proofOfPharmacy._id;
     await invoice.save();
+
+    console.log("[confirmReceipt] Hoàn thành:", {
+      invoiceId: invoice._id,
+      proofOfPharmacyId: proofOfPharmacy._id,
+      status: proofOfPharmacy.status,
+    });
 
     return res.status(200).json({
       success: true,
@@ -172,7 +293,13 @@ export const confirmReceipt = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Lỗi khi xác nhận nhận hàng:", error);
+    console.error("[confirmReceipt] Lỗi:", {
+      error: error.message,
+      stack: error.stack,
+      invoiceId: req.body?.invoiceId,
+      userId: req.user?._id,
+      timestamp: new Date().toISOString(),
+    });
     return res.status(500).json({
       success: false,
       message: "Lỗi server khi xác nhận nhận hàng",

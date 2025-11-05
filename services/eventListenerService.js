@@ -51,20 +51,34 @@ export const listenToDistributorToPharmacyEvent = async () => {
     console.log("Đang lắng nghe event DistributorToPharmacy...");
 
     // Lắng nghe event từ block hiện tại
-    myNFTContract.on("DistributorToPharmacy", async (
-      distributorAddress,
-      pharmacyAddress,
-      tokenIds,
-      receivedTimestamp,
-      event
-    ) => {
+    // Trong ethers.js v6, event listener nhận callback với (args..., eventLog)
+    myNFTContract.on("DistributorToPharmacy", async (...args) => {
       try {
+        // Trong ethers v6, tham số cuối cùng là event log object
+        const eventLog = args[args.length - 1];
+        const distributorAddress = args[0];
+        const pharmacyAddress = args[1];
+        const tokenIds = args[2];
+        const receivedTimestamp = args[3];
+        
+        // Lấy transaction hash từ event log
+        // Trong ethers v6, transaction hash có thể ở: eventLog.hash hoặc eventLog.transactionHash
+        const transactionHash = eventLog?.hash || eventLog?.transactionHash || eventLog?.txHash;
+        
         console.log("Nhận được event DistributorToPharmacy:");
         console.log("Distributor:", distributorAddress);
         console.log("Pharmacy:", pharmacyAddress);
         console.log("Token IDs:", tokenIds.map((id) => id.toString()));
         console.log("Timestamp:", receivedTimestamp.toString());
-        console.log("Transaction Hash:", event.transactionHash);
+        console.log("Event Log structure:", {
+          hasHash: !!eventLog?.hash,
+          hasTransactionHash: !!eventLog?.transactionHash,
+          hasTxHash: !!eventLog?.txHash,
+          blockNumber: eventLog?.blockNumber,
+          keys: eventLog ? Object.keys(eventLog) : [],
+          eventLogType: typeof eventLog,
+        });
+        console.log("Transaction Hash:", transactionHash || "UNDEFINED");
 
         // Chuyển đổi timestamp
         const timestamp = Number(receivedTimestamp.toString()) * 1000; // Convert to milliseconds
@@ -120,7 +134,9 @@ export const listenToDistributorToPharmacyEvent = async () => {
 
           if (proofOfPharmacy) {
             // Cập nhật ProofOfPharmacy với thông tin từ blockchain
-            proofOfPharmacy.receiptTxHash = event.transactionHash;
+            if (transactionHash) {
+              proofOfPharmacy.receiptTxHash = transactionHash;
+            }
             proofOfPharmacy.status = "received"; // Đã nhận được NFT từ blockchain
             proofOfPharmacy.supplyChainCompleted = true;
             proofOfPharmacy.completedAt = transferDate;
@@ -131,7 +147,7 @@ export const listenToDistributorToPharmacyEvent = async () => {
               fromDistributor: distributor._id,
               toPharmacy: pharmacy._id,
               commercialInvoice: commercialInvoice._id,
-              receiptTxHash: event.transactionHash,
+              receiptTxHash: transactionHash,
               status: "received",
               supplyChainCompleted: true,
               completedAt: transferDate,
@@ -142,7 +158,9 @@ export const listenToDistributorToPharmacyEvent = async () => {
             // Cập nhật CommercialInvoice để tham chiếu đến ProofOfPharmacy
             commercialInvoice.proofOfPharmacy = proofOfPharmacy._id;
             commercialInvoice.status = "sent"; // Đã gửi thành công
-            commercialInvoice.chainTxHash = event.transactionHash;
+            if (transactionHash) {
+              commercialInvoice.chainTxHash = transactionHash;
+            }
             await commercialInvoice.save();
           }
         } else {
@@ -150,7 +168,7 @@ export const listenToDistributorToPharmacyEvent = async () => {
           proofOfPharmacy = new ProofOfPharmacy({
             fromDistributor: distributor._id,
             toPharmacy: pharmacy._id,
-            receiptTxHash: event.transactionHash,
+            receiptTxHash: transactionHash,
             status: "received",
             supplyChainCompleted: true,
             completedAt: transferDate,
@@ -160,21 +178,30 @@ export const listenToDistributorToPharmacyEvent = async () => {
         }
 
         // Cập nhật NFT ownership và status
+        const updateData = {
+          $set: {
+            owner: pharmacy._id,
+            status: "sold",
+          },
+        };
+        if (transactionHash) {
+          updateData.$set.chainTxHash = transactionHash;
+        }
+
         await NFTInfo.updateMany(
           { tokenId: { $in: tokenIdStrings } },
-          {
-            $set: {
-              owner: pharmacy._id,
-              status: "sold",
-              chainTxHash: event.transactionHash,
-            },
-          }
+          updateData
         );
 
         console.log("Đã lưu thông tin từ event DistributorToPharmacy vào database:");
         console.log("- ProofOfPharmacy ID:", proofOfPharmacy._id);
         console.log("- Số lượng NFT cập nhật:", nfts.length);
-        console.log("- Transaction Hash:", event.transactionHash);
+        console.log("- Transaction Hash:", transactionHash || "KHÔNG TÌM THẤY");
+        
+        if (!transactionHash) {
+          console.warn("⚠️ Cảnh báo: Transaction hash không có trong event. Cần kiểm tra lại cách lấy transaction hash từ event listener.");
+          console.warn("Event log object:", JSON.stringify(eventLog, null, 2));
+        }
       } catch (error) {
         console.error("Lỗi khi xử lý event DistributorToPharmacy:", error);
         console.error("Error details:", error.message);

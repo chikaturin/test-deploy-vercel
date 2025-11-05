@@ -2,6 +2,7 @@ import DrugInfo from "../models/DrugInfo.js";
 import NFTInfo from "../models/NFTInfo.js";
 import ProofOfProduction from "../models/ProofOfProduction.js";
 import ManufacturerInvoice from "../models/ManufacturerInvoice.js";
+import ProofOfDistribution from "../models/ProofOfDistribution.js";
 import PharmaCompany from "../models/PharmaCompany.js";
 import User from "../models/User.js";
 import Distributor from "../models/Distributor.js";
@@ -756,7 +757,14 @@ export const saveTransferTransaction = async (req, res) => {
   try {
     const user = req.user;
 
+    console.log("[saveTransferTransaction] Bắt đầu:", {
+      userId: user._id,
+      userRole: user.role,
+      timestamp: new Date().toISOString(),
+    });
+
     if (user.role !== "pharma_company") {
+      console.log("[saveTransferTransaction]  Role không hợp lệ:", user.role);
       return res.status(403).json({
         success: false,
         message: "Chỉ có pharma company mới có thể lưu transaction transfer",
@@ -769,7 +777,19 @@ export const saveTransferTransaction = async (req, res) => {
       tokenIds,
     } = req.body;
 
+    console.log("[saveTransferTransaction] Request body:", {
+      invoiceId,
+      transactionHash,
+      tokenIdsCount: Array.isArray(tokenIds) ? tokenIds.length : 0,
+      tokenIds: Array.isArray(tokenIds) ? tokenIds.slice(0, 5) : tokenIds,
+    });
+
     if (!invoiceId || !transactionHash || !tokenIds) {
+      console.log("[saveTransferTransaction]  Thiếu tham số:", {
+        hasInvoiceId: !!invoiceId,
+        hasTransactionHash: !!transactionHash,
+        hasTokenIds: !!tokenIds,
+      });
       return res.status(400).json({
         success: false,
         message: "invoiceId, transactionHash và tokenIds là bắt buộc",
@@ -777,38 +797,93 @@ export const saveTransferTransaction = async (req, res) => {
     }
 
     // Tìm invoice
+    console.log("[saveTransferTransaction] Đang tìm invoice...");
     const manufacturerInvoice = await ManufacturerInvoice.findById(invoiceId);
 
     if (!manufacturerInvoice) {
+      console.log("[saveTransferTransaction]  Không tìm thấy invoice:", invoiceId);
       return res.status(404).json({
         success: false,
         message: "Không tìm thấy invoice",
       });
     }
 
+    console.log("[saveTransferTransaction]  Tìm thấy invoice:", {
+      invoiceId: manufacturerInvoice._id,
+      invoiceNumber: manufacturerInvoice.invoiceNumber,
+      status: manufacturerInvoice.status,
+      fromManufacturer: manufacturerInvoice.fromManufacturer,
+      toDistributor: manufacturerInvoice.toDistributor,
+    });
+
     // Kiểm tra invoice thuộc về user này
     if (manufacturerInvoice.fromManufacturer.toString() !== user._id.toString()) {
+      console.log("[saveTransferTransaction]  Không có quyền:", {
+        invoiceFromManufacturer: manufacturerInvoice.fromManufacturer.toString(),
+        userId: user._id.toString(),
+      });
       return res.status(403).json({
         success: false,
         message: "Bạn không có quyền cập nhật invoice này",
       });
     }
 
+    // Kiểm tra NFT tồn tại trước khi cập nhật
+    console.log("[saveTransferTransaction] Kiểm tra NFT trước khi cập nhật...");
+    const existingNFTs = await NFTInfo.find({ tokenId: { $in: tokenIds } });
+    console.log("[saveTransferTransaction] NFT hiện tại:", {
+      requestedCount: tokenIds.length,
+      foundCount: existingNFTs.length,
+      sampleNFTs: existingNFTs.slice(0, 3).map(nft => ({
+        tokenId: nft.tokenId,
+        owner: nft.owner,
+        status: nft.status,
+        chainTxHash: nft.chainTxHash,
+      })),
+    });
+
     // Cập nhật invoice
     manufacturerInvoice.status = "sent";
     manufacturerInvoice.chainTxHash = transactionHash;
     await manufacturerInvoice.save();
+    console.log("[saveTransferTransaction]  Đã cập nhật invoice:", {
+      status: manufacturerInvoice.status,
+      chainTxHash: manufacturerInvoice.chainTxHash,
+    });
 
-    // Cập nhật trạng thái NFT
-    await NFTInfo.updateMany(
+    // Cập nhật trạng thái NFT (bao gồm chainTxHash để có thể tìm lại sau này)
+    console.log("[saveTransferTransaction] Đang cập nhật NFT...");
+    const updateResult = await NFTInfo.updateMany(
       { tokenId: { $in: tokenIds } },
       {
         $set: {
           status: "transferred",
           owner: manufacturerInvoice.toDistributor,
+          chainTxHash: transactionHash, // Lưu chainTxHash để có thể tìm lại
         },
       }
     );
+
+    console.log("[saveTransferTransaction]  Kết quả cập nhật NFT:", {
+      matchedCount: updateResult.matchedCount,
+      modifiedCount: updateResult.modifiedCount,
+      requestedCount: tokenIds.length,
+    });
+
+    // Verify: Kiểm tra NFT đã được cập nhật đúng chưa
+    const updatedNFTs = await NFTInfo.find({ 
+      tokenId: { $in: tokenIds },
+      chainTxHash: transactionHash,
+    });
+    console.log("[saveTransferTransaction]  Verify NFT sau khi cập nhật:", {
+      foundWithChainTxHash: updatedNFTs.length,
+      sampleUpdatedNFTs: updatedNFTs.slice(0, 3).map(nft => ({
+        tokenId: nft.tokenId,
+        owner: nft.owner,
+        status: nft.status,
+        chainTxHash: nft.chainTxHash,
+      })),
+    });
 
     return res.status(200).json({
       success: true,
@@ -820,7 +895,13 @@ export const saveTransferTransaction = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Lỗi khi lưu transaction transfer:", error);
+    console.error("[saveTransferTransaction]  Lỗi:", {
+      error: error.message,
+      stack: error.stack,
+      invoiceId: req.body?.invoiceId,
+      userId: req.user?._id,
+      timestamp: new Date().toISOString(),
+    });
     return res.status(500).json({
       success: false,
       message: "Lỗi server khi lưu transaction transfer",
@@ -1289,6 +1370,424 @@ export const getDistributors = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Lỗi server khi lấy danh sách distributors",
+      error: error.message,
+    });
+  }
+};
+
+// ============ QUẢN LÝ DISTRIBUTION (XÁC NHẬN QUYỀN NFT) ============
+
+// Lấy danh sách distributions chờ xác nhận quyền NFT
+export const getDistributions = async (req, res) => {
+  try {
+    const user = req.user;
+
+    if (user.role !== "pharma_company") {
+      return res.status(403).json({
+        success: false,
+        message: "Chỉ có pharma company mới có thể xem danh sách distributions",
+      });
+    }
+
+    const { page = 1, limit = 10, status = "confirmed" } = req.query;
+
+    const filter = {
+      fromManufacturer: user._id,
+    };
+
+    // Nếu có status, chỉ lấy distributions với status đó
+    if (status) {
+      filter.status = status;
+    }
+
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const skip = (pageNum - 1) * limitNum;
+
+    const distributions = await ProofOfDistribution.find(filter)
+      .populate("toDistributor", "username email fullName walletAddress")
+      .populate("manufacturerInvoice", "invoiceNumber invoiceDate quantity status chainTxHash")
+      .populate("proofOfProduction", "batchNumber productionDate")
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limitNum);
+
+    const total = await ProofOfDistribution.countDocuments(filter);
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        distributions,
+        pagination: {
+          page: pageNum,
+          limit: limitNum,
+          total,
+          pages: Math.ceil(total / limitNum),
+        },
+      },
+    });
+  } catch (error) {
+    console.error("Lỗi khi lấy danh sách distributions:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Lỗi server khi lấy danh sách distributions",
+      error: error.message,
+    });
+  }
+};
+
+// Lấy chi tiết distribution
+export const getDistributionDetail = async (req, res) => {
+  try {
+    const user = req.user;
+    const { distributionId } = req.params;
+
+    if (user.role !== "pharma_company") {
+      return res.status(403).json({
+        success: false,
+        message: "Chỉ có pharma company mới có thể xem chi tiết distribution",
+      });
+    }
+
+    const distribution = await ProofOfDistribution.findById(distributionId)
+      .populate("fromManufacturer", "username email fullName walletAddress")
+      .populate("toDistributor", "username email fullName walletAddress")
+      .populate("manufacturerInvoice", "invoiceNumber invoiceDate quantity status chainTxHash")
+      .populate("proofOfProduction", "batchNumber productionDate drug");
+
+    if (!distribution) {
+      return res.status(404).json({
+        success: false,
+        message: "Không tìm thấy distribution",
+      });
+    }
+
+    // Kiểm tra distribution thuộc về manufacturer này
+    const fromManufacturerId = distribution.fromManufacturer._id || distribution.fromManufacturer;
+    if (fromManufacturerId.toString() !== user._id.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: "Bạn không có quyền xem distribution này",
+      });
+    }
+
+    // Lấy tokenIds từ ManufacturerInvoice nếu có
+    let tokenIds = [];
+    if (distribution.manufacturerInvoice) {
+      const invoice = distribution.manufacturerInvoice;
+      
+      // Lấy tokenIds từ NFTInfo dựa trên chainTxHash hoặc proofOfProduction
+      let nftQuery = {};
+      
+      if (invoice.chainTxHash) {
+        nftQuery.chainTxHash = invoice.chainTxHash;
+      } else if (distribution.proofOfProduction) {
+        nftQuery.proofOfProduction = distribution.proofOfProduction._id || distribution.proofOfProduction;
+      }
+      
+      if (Object.keys(nftQuery).length > 0) {
+        const nfts = await NFTInfo.find(nftQuery).select("tokenId");
+        tokenIds = nfts.map(nft => nft.tokenId);
+      }
+    }
+
+    const distributionObj = distribution.toObject();
+    distributionObj.tokenIds = tokenIds;
+
+    return res.status(200).json({
+      success: true,
+      data: distributionObj,
+    });
+  } catch (error) {
+    console.error("Lỗi khi lấy chi tiết distribution:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Lỗi server khi lấy chi tiết distribution",
+      error: error.message,
+    });
+  }
+};
+
+// Xác nhận quyền NFT cho distributor
+export const approveDistribution = async (req, res) => {
+  try {
+    const user = req.user;
+    const { distributionId } = req.params;
+
+    console.log("[approveDistribution] Bắt đầu:", {
+      distributionId,
+      userId: user._id,
+      userRole: user.role,
+      timestamp: new Date().toISOString(),
+    });
+
+    if (user.role !== "pharma_company") {
+      console.log("[approveDistribution]  Role không hợp lệ:", user.role);
+      return res.status(403).json({
+        success: false,
+        message: "Chỉ có pharma company mới có thể xác nhận quyền NFT",
+      });
+    }
+
+    // Tìm distribution
+    console.log("[approveDistribution] Đang tìm distribution...");
+    const distribution = await ProofOfDistribution.findById(distributionId)
+      .populate("manufacturerInvoice")
+      .populate("toDistributor", "walletAddress");
+
+    if (!distribution) {
+      console.log("[approveDistribution]  Không tìm thấy distribution:", distributionId);
+      return res.status(404).json({
+        success: false,
+        message: "Không tìm thấy distribution",
+      });
+    }
+
+    console.log("[approveDistribution]  Tìm thấy distribution:", {
+      distributionId: distribution._id,
+      status: distribution.status,
+      fromManufacturer: distribution.fromManufacturer?._id || distribution.fromManufacturer,
+      toDistributor: distribution.toDistributor?._id || distribution.toDistributor,
+      distributedQuantity: distribution.distributedQuantity,
+      hasInvoice: !!distribution.manufacturerInvoice,
+      hasProofOfProduction: !!distribution.proofOfProduction,
+    });
+
+    // Kiểm tra distribution thuộc về manufacturer này
+    const fromManufacturerId = distribution.fromManufacturer._id || distribution.fromManufacturer;
+    if (fromManufacturerId.toString() !== user._id.toString()) {
+      console.log("[approveDistribution]  Không có quyền:", {
+        fromManufacturerId: fromManufacturerId.toString(),
+        userId: user._id.toString(),
+      });
+      return res.status(403).json({
+        success: false,
+        message: "Bạn không có quyền xác nhận distribution này",
+      });
+    }
+
+    // Kiểm tra distribution đã được confirmed chưa
+    if (distribution.status !== "confirmed") {
+      console.log("[approveDistribution]  Status không hợp lệ:", distribution.status);
+      return res.status(400).json({
+        success: false,
+        message: `Distribution chưa được distributor xác nhận. Trạng thái hiện tại: ${distribution.status}`,
+      });
+    }
+
+    // Lấy tokenIds từ ManufacturerInvoice
+    const invoice = distribution.manufacturerInvoice;
+    if (!invoice) {
+      console.log("[approveDistribution]  Distribution không có invoice");
+      return res.status(400).json({
+        success: false,
+        message: "Distribution không có invoice liên kết",
+      });
+    }
+
+    console.log("[approveDistribution]  Invoice info:", {
+      invoiceId: invoice._id,
+      invoiceNumber: invoice.invoiceNumber,
+      status: invoice.status,
+      chainTxHash: invoice.chainTxHash,
+      hasTokenIds: !!invoice.tokenIds,
+      tokenIdsCount: Array.isArray(invoice.tokenIds) ? invoice.tokenIds.length : 0,
+    });
+
+    // Kiểm tra invoice đã được sent (đã chuyển NFT trên blockchain)
+    if (invoice.status !== "sent" || !invoice.chainTxHash) {
+      console.log("[approveDistribution]  Invoice chưa được sent hoặc chưa có chainTxHash:", {
+        status: invoice.status,
+        hasChainTxHash: !!invoice.chainTxHash,
+      });
+      return res.status(400).json({
+        success: false,
+        message: "Invoice chưa được gửi hoặc chưa có transaction hash. Vui lòng đảm bảo đã chuyển NFT trên blockchain trước.",
+      });
+    }
+
+    // Lấy tokenIds từ NFTInfo
+    // Có thể tìm theo nhiều cách:
+    // 1. Theo chainTxHash (nếu đã được lưu trong saveTransferTransaction)
+    // 2. Theo proofOfProduction (nếu có)
+    // 3. Theo owner và status (nếu đã được transferred)
+    
+    console.log("[approveDistribution] Bắt đầu tìm NFT...");
+    let nftInfos = [];
+    
+    // Thử 1: Tìm theo chainTxHash (nếu đã được lưu)
+    if (invoice.chainTxHash) {
+      console.log("[approveDistribution]  Thử 1: Tìm theo chainTxHash:", invoice.chainTxHash);
+      nftInfos = await NFTInfo.find({
+        chainTxHash: invoice.chainTxHash,
+      });
+      console.log("[approveDistribution] Thử 1 - Kết quả:", {
+        found: nftInfos.length,
+        tokenIds: nftInfos.map(nft => nft.tokenId),
+      });
+    }
+    
+    // Thử 2: Nếu không tìm thấy, thử tìm theo proofOfProduction
+    if (nftInfos.length === 0 && distribution.proofOfProduction) {
+      const proofOfProductionId = distribution.proofOfProduction._id || distribution.proofOfProduction;
+      console.log("[approveDistribution]  Thử 2: Tìm theo proofOfProduction:", proofOfProductionId);
+      nftInfos = await NFTInfo.find({
+        proofOfProduction: proofOfProductionId,
+        status: { $in: ["transferred", "minted"] },
+      });
+      console.log("[approveDistribution] Thử 2 - Kết quả:", {
+        found: nftInfos.length,
+        tokenIds: nftInfos.map(nft => nft.tokenId),
+      });
+    }
+    
+    // Thử 3: Nếu vẫn không tìm thấy, tìm theo owner (distributor) và status transferred
+    // (NFT đã được transferred cho distributor này)
+    if (nftInfos.length === 0) {
+      const distributorId = distribution.toDistributor._id || distribution.toDistributor;
+      console.log("[approveDistribution]  Thử 3: Tìm theo owner (distributor) và status transferred:", {
+        distributorId,
+        limit: distribution.distributedQuantity || 100,
+      });
+      nftInfos = await NFTInfo.find({
+        owner: distributorId,
+        status: "transferred",
+      }).limit(distribution.distributedQuantity || 100);
+      console.log("[approveDistribution] Thử 3 - Kết quả:", {
+        found: nftInfos.length,
+        tokenIds: nftInfos.map(nft => nft.tokenId),
+        sampleNFTs: nftInfos.slice(0, 3).map(nft => ({
+          tokenId: nft.tokenId,
+          owner: nft.owner,
+          status: nft.status,
+          chainTxHash: nft.chainTxHash,
+        })),
+      });
+    }
+    
+    // Nếu vẫn không tìm thấy, thử tìm theo invoice (nếu có lưu tokenIds trong invoice)
+    if (nftInfos.length === 0 && invoice.tokenIds && Array.isArray(invoice.tokenIds) && invoice.tokenIds.length > 0) {
+      console.log("[approveDistribution]  Thử 4: Tìm theo tokenIds từ invoice:", {
+        tokenIdsCount: invoice.tokenIds.length,
+        tokenIds: invoice.tokenIds.slice(0, 5),
+      });
+      nftInfos = await NFTInfo.find({
+        tokenId: { $in: invoice.tokenIds },
+      });
+      console.log("[approveDistribution] Thử 4 - Kết quả:", {
+        found: nftInfos.length,
+        tokenIds: nftInfos.map(nft => nft.tokenId),
+      });
+    }
+    
+    if (nftInfos.length === 0) {
+      // Debug: Kiểm tra tất cả NFT có owner là distributor
+      const distributorId = distribution.toDistributor._id || distribution.toDistributor;
+      const allDistributorNFTs = await NFTInfo.find({ owner: distributorId }).limit(10);
+      const allTransferredNFTs = await NFTInfo.find({ status: "transferred" }).limit(10);
+      
+      console.error("[approveDistribution]  Không tìm thấy NFT:", {
+        distributionId,
+        invoiceId: invoice._id,
+        chainTxHash: invoice.chainTxHash,
+        proofOfProduction: distribution.proofOfProduction?._id || distribution.proofOfProduction,
+        distributedQuantity: distribution.distributedQuantity,
+        distributorId,
+        // Debug info
+        allDistributorNFTsCount: await NFTInfo.countDocuments({ owner: distributorId }),
+        allTransferredNFTsCount: await NFTInfo.countDocuments({ status: "transferred" }),
+        sampleDistributorNFTs: allDistributorNFTs.map(nft => ({
+          tokenId: nft.tokenId,
+          status: nft.status,
+          chainTxHash: nft.chainTxHash,
+        })),
+        sampleTransferredNFTs: allTransferredNFTs.map(nft => ({
+          tokenId: nft.tokenId,
+          owner: nft.owner,
+          chainTxHash: nft.chainTxHash,
+        })),
+      });
+      
+      return res.status(400).json({
+        success: false,
+        message: "Không tìm thấy NFT nào liên quan đến distribution này. Vui lòng kiểm tra lại:\n" +
+                 "- Invoice đã có chainTxHash chưa?\n" +
+                 "- NFT đã được transferred chưa?\n" +
+                 "- Distribution đã liên kết với proofOfProduction chưa?",
+      });
+    }
+    
+    console.log("[approveDistribution]  Đã tìm thấy NFT:", {
+      count: nftInfos.length,
+      tokenIds: nftInfos.map(nft => nft.tokenId),
+      sampleNFTs: nftInfos.slice(0, 3).map(nft => ({
+        tokenId: nft.tokenId,
+        owner: nft.owner,
+        status: nft.status,
+        chainTxHash: nft.chainTxHash,
+      })),
+    });
+
+    const tokenIds = nftInfos.map(nft => nft.tokenId);
+    const distributorId = distribution.toDistributor._id || distribution.toDistributor;
+
+    console.log("[approveDistribution] Cập nhật NFT:", {
+      tokenIdsCount: tokenIds.length,
+      distributorId,
+      tokenIds: tokenIds.slice(0, 5),
+    });
+
+    // Cập nhật NFT owner và đảm bảo status = "transferred"
+    // (NFT đã được transferred trên blockchain, giờ chỉ cần cập nhật owner trong DB)
+    const updateResult = await NFTInfo.updateMany(
+      { tokenId: { $in: tokenIds } },
+      {
+        $set: {
+          owner: distributorId,
+          status: "transferred",
+        },
+      }
+    );
+
+    console.log("[approveDistribution] Kết quả cập nhật NFT:", {
+      matchedCount: updateResult.matchedCount,
+      modifiedCount: updateResult.modifiedCount,
+    });
+
+    // Cập nhật distribution status
+    // Có thể thêm status "completed" hoặc "approved", nhưng để đơn giản, ta sẽ thêm field approved
+    distribution.status = "confirmed"; // Giữ nguyên hoặc có thể thêm status mới
+    distribution.verifiedBy = user._id;
+    distribution.verifiedAt = new Date();
+    await distribution.save();
+
+    console.log("[approveDistribution]  Hoàn thành xác nhận:", {
+      distributionId: distribution._id,
+      verifiedBy: user._id,
+      verifiedAt: distribution.verifiedAt,
+      updatedNFTs: nftInfos.length,
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: "Đã xác nhận quyền NFT thành công. Distributor đã có quyền sở hữu NFT.",
+      data: {
+        distribution,
+        tokenIds,
+        updatedNFTs: nftInfos.length,
+      },
+    });
+  } catch (error) {
+    console.error("[approveDistribution]  Lỗi:", {
+      error: error.message,
+      stack: error.stack,
+      distributionId: req.params.distributionId,
+      userId: req.user?._id,
+      timestamp: new Date().toISOString(),
+    });
+    return res.status(500).json({
+      success: false,
+      message: "Lỗi server khi xác nhận quyền NFT",
       error: error.message,
     });
   }

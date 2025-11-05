@@ -110,34 +110,95 @@ export const getInvoiceDetail = async (req, res) => {
     }
 
     // Lấy tokenIds từ NFTInfo
-    // Cách 1: Lấy từ NFT có chainTxHash = invoice.chainTxHash (nếu invoice đã sent)
-    // Cách 2: Lấy từ NFT có owner = distributor và proofOfProduction = invoice.proofOfProduction
+    // Có thể tìm theo nhiều cách tương tự approveDistribution
+    console.log("[getInvoiceDetail] Bắt đầu tìm tokenIds:", {
+      invoiceId,
+      invoiceStatus: invoice.status,
+      chainTxHash: invoice.chainTxHash,
+      hasProofOfProduction: !!invoice.proofOfProduction,
+      distributorId: user._id,
+    });
+
     let tokenIds = [];
     
+    // Thử 1: Tìm theo chainTxHash (không cần owner, vì NFT có thể đã được transferred)
     if (invoice.chainTxHash) {
-      // Nếu invoice đã có chainTxHash, lấy NFT theo chainTxHash
-      const nfts = await NFTInfo.find({
+      console.log("[getInvoiceDetail]  Thử 1: Tìm theo chainTxHash:", invoice.chainTxHash);
+      let nfts = await NFTInfo.find({
         chainTxHash: invoice.chainTxHash,
-        owner: user._id,
-      }).select("tokenId");
-      tokenIds = nfts.map(nft => nft.tokenId);
+      }).select("tokenId owner status");
+      
+      console.log("[getInvoiceDetail] Thử 1 - Kết quả (không filter owner):", {
+        found: nfts.length,
+        tokenIds: nfts.map(nft => nft.tokenId),
+        sampleNFTs: nfts.slice(0, 3).map(nft => ({
+          tokenId: nft.tokenId,
+          owner: nft.owner,
+          status: nft.status,
+        })),
+      });
+      
+      // Filter theo owner nếu có (NFT có thể thuộc về distributor sau khi approve)
+      const ownerNFTs = nfts.filter(nft => {
+        const ownerId = nft.owner?._id || nft.owner;
+        return ownerId && ownerId.toString() === user._id.toString();
+      });
+      
+      if (ownerNFTs.length > 0) {
+        tokenIds = ownerNFTs.map(nft => nft.tokenId);
+        console.log("[getInvoiceDetail] Thử 1 - Filter theo owner:", {
+          found: tokenIds.length,
+          tokenIds,
+        });
+      } else {
+        // Nếu không có owner match, vẫn lấy tất cả (có thể NFT chưa được approve)
+        tokenIds = nfts.map(nft => nft.tokenId);
+        console.log("[getInvoiceDetail] Thử 1 - Không filter owner, lấy tất cả:", {
+          found: tokenIds.length,
+          tokenIds,
+        });
+      }
     }
     
-    // Nếu chưa có tokenIds và có proofOfProduction, lấy từ proofOfProduction
+    // Thử 2: Nếu chưa có tokenIds và có proofOfProduction, lấy từ proofOfProduction
     if (tokenIds.length === 0 && invoice.proofOfProduction) {
+      const proofOfProductionId = invoice.proofOfProduction._id || invoice.proofOfProduction;
+      console.log("[getInvoiceDetail]  Thử 2: Tìm theo proofOfProduction:", proofOfProductionId);
       const nfts = await NFTInfo.find({
-        proofOfProduction: invoice.proofOfProduction._id || invoice.proofOfProduction,
+        proofOfProduction: proofOfProductionId,
         owner: user._id,
         status: { $in: ["transferred", "minted"] },
       }).select("tokenId");
       tokenIds = nfts.map(nft => nft.tokenId);
+      console.log("[getInvoiceDetail] Thử 2 - Kết quả:", {
+        found: tokenIds.length,
+        tokenIds,
+      });
+    }
+    
+    // Thử 3: Tìm theo owner (distributor) và status transferred (nếu đã được approve)
+    if (tokenIds.length === 0) {
+      console.log("[getInvoiceDetail]  Thử 3: Tìm theo owner (distributor) và status transferred");
+      const nfts = await NFTInfo.find({
+        owner: user._id,
+        status: "transferred",
+      }).select("tokenId").limit(100); // Limit để tránh lấy quá nhiều
+      tokenIds = nfts.map(nft => nft.tokenId);
+      console.log("[getInvoiceDetail] Thử 3 - Kết quả:", {
+        found: tokenIds.length,
+        tokenIds: tokenIds.slice(0, 10),
+      });
     }
 
     // Trả về invoice với tokenIds
     const invoiceObj = invoice.toObject();
     invoiceObj.tokenIds = tokenIds;
 
-    console.log("[getInvoiceDetail] invoiceId=", invoiceId, "tokenIds found=", tokenIds.length);
+    console.log("[getInvoiceDetail]  Kết quả cuối cùng:", {
+      invoiceId,
+      tokenIdsFound: tokenIds.length,
+      tokenIds: tokenIds.slice(0, 10),
+    });
 
     return res.status(200).json({
       success: true,
@@ -269,7 +330,15 @@ export const transferToPharmacy = async (req, res) => {
   try {
     const user = req.user;
 
+    console.log("[transferToPharmacy] Bắt đầu:", {
+      userId: user._id,
+      userRole: user.role,
+      userWalletAddress: user.walletAddress,
+      timestamp: new Date().toISOString(),
+    });
+
     if (user.role !== "distributor") {
+      console.log("[transferToPharmacy]  Role không hợp lệ:", user.role);
       return res.status(403).json({
         success: false,
         message: "Chỉ có distributor mới có thể chuyển giao cho pharmacy",
@@ -277,6 +346,7 @@ export const transferToPharmacy = async (req, res) => {
     }
 
     if (!user.walletAddress) {
+      console.log("[transferToPharmacy]  User chưa có wallet address");
       return res.status(400).json({
         success: false,
         message: "User chưa có wallet address",
@@ -299,7 +369,23 @@ export const transferToPharmacy = async (req, res) => {
       deliveryAddress,
     } = req.body;
 
+    console.log("[transferToPharmacy] Request body:", {
+      pharmacyId,
+      tokenIdsCount: Array.isArray(tokenIds) ? tokenIds.length : 0,
+      tokenIds: Array.isArray(tokenIds) ? tokenIds.slice(0, 5) : tokenIds,
+      amountsCount: Array.isArray(amounts) ? amounts.length : 0,
+      amounts: Array.isArray(amounts) ? amounts.slice(0, 5) : amounts,
+      quantity,
+      invoiceNumber,
+      notes,
+    });
+
     if (!pharmacyId || !tokenIds || !amounts) {
+      console.log("[transferToPharmacy]  Thiếu tham số:", {
+        hasPharmacyId: !!pharmacyId,
+        hasTokenIds: !!tokenIds,
+        hasAmounts: !!amounts,
+      });
       return res.status(400).json({
         success: false,
         message: "pharmacyId, tokenIds và amounts là bắt buộc",
@@ -307,6 +393,10 @@ export const transferToPharmacy = async (req, res) => {
     }
 
     if (tokenIds.length !== amounts.length) {
+      console.log("[transferToPharmacy]  Số lượng tokenIds và amounts không khớp:", {
+        tokenIdsLength: tokenIds.length,
+        amountsLength: amounts.length,
+      });
       return res.status(400).json({
         success: false,
         message: "Số lượng tokenIds phải bằng số lượng amounts",
@@ -314,15 +404,25 @@ export const transferToPharmacy = async (req, res) => {
     }
 
     // Tìm pharmacy
+    console.log("[transferToPharmacy] Đang tìm pharmacy...");
     const pharmacy = await Pharmacy.findById(pharmacyId).populate("user");
     if (!pharmacy || !pharmacy.user) {
+      console.log("[transferToPharmacy]  Không tìm thấy pharmacy:", pharmacyId);
       return res.status(404).json({
         success: false,
         message: "Không tìm thấy pharmacy",
       });
     }
 
+    console.log("[transferToPharmacy]  Tìm thấy pharmacy:", {
+      pharmacyId: pharmacy._id,
+      pharmacyName: pharmacy.name,
+      pharmacyWalletAddress: pharmacy.user?.walletAddress,
+      hasUserWallet: !!pharmacy.user?.walletAddress,
+    });
+
     if (!pharmacy.user.walletAddress) {
+      console.log("[transferToPharmacy]  Pharmacy chưa có wallet address");
       return res.status(400).json({
         success: false,
         message: "Pharmacy chưa có wallet address",
@@ -330,13 +430,32 @@ export const transferToPharmacy = async (req, res) => {
     }
 
     // Kiểm tra quyền sở hữu NFT (NFT phải thuộc về distributor và đã được transferred)
+    console.log("[transferToPharmacy] Kiểm tra quyền sở hữu NFT...");
     const nftInfos = await NFTInfo.find({
       tokenId: { $in: tokenIds },
       owner: user._id,
       status: "transferred",
     });
 
+    console.log("[transferToPharmacy] Kết quả kiểm tra NFT:", {
+      requestedCount: tokenIds.length,
+      foundCount: nftInfos.length,
+      sampleNFTs: nftInfos.slice(0, 3).map(nft => ({
+        tokenId: nft.tokenId,
+        owner: nft.owner,
+        status: nft.status,
+        drug: nft.drug,
+      })),
+      missingTokenIds: tokenIds.filter(id => !nftInfos.find(nft => nft.tokenId === id)),
+    });
+
     if (nftInfos.length !== tokenIds.length) {
+      console.log("[transferToPharmacy]  Một số NFT không thuộc về distributor hoặc không ở trạng thái transferred:", {
+        requested: tokenIds.length,
+        found: nftInfos.length,
+        missing: tokenIds.length - nftInfos.length,
+        missingTokenIds: tokenIds.filter(id => !nftInfos.find(nft => nft.tokenId === id)),
+      });
       return res.status(400).json({
         success: false,
         message: "Một số NFT không thuộc về bạn hoặc không ở trạng thái transferred",
@@ -345,15 +464,18 @@ export const transferToPharmacy = async (req, res) => {
 
     // Lấy drug từ NFT đầu tiên
     const drugId = nftInfos[0].drug;
+    console.log("[transferToPharmacy] Drug ID từ NFT:", drugId);
 
     // Tạo Commercial Invoice với trạng thái draft (chờ frontend gọi smart contract)
+    const calculatedQuantity = quantity || amounts.reduce((sum, amt) => sum + amt, 0);
+    console.log("[transferToPharmacy] Tạo Commercial Invoice...");
     const commercialInvoice = new CommercialInvoice({
       fromDistributor: user._id,
       toPharmacy: pharmacy.user._id,
       drug: drugId,
       invoiceNumber: invoiceNumber || `CI-${Date.now()}`,
       invoiceDate: invoiceDate ? new Date(invoiceDate) : new Date(),
-      quantity: quantity || amounts.reduce((sum, amt) => sum + amt, 0),
+      quantity: calculatedQuantity,
       unitPrice,
       totalAmount,
       vatRate,
@@ -365,19 +487,44 @@ export const transferToPharmacy = async (req, res) => {
     });
 
     await commercialInvoice.save();
+    console.log("[transferToPharmacy]  Đã tạo Commercial Invoice:", {
+      invoiceId: commercialInvoice._id,
+      invoiceNumber: commercialInvoice.invoiceNumber,
+      status: commercialInvoice.status,
+      quantity: commercialInvoice.quantity,
+      fromDistributor: commercialInvoice.fromDistributor,
+      toPharmacy: commercialInvoice.toPharmacy,
+    });
 
     // Tạo Proof of Pharmacy với trạng thái pending
+    console.log("[transferToPharmacy] Tạo Proof of Pharmacy...");
     const proofOfPharmacy = new ProofOfPharmacy({
       fromDistributor: user._id,
       toPharmacy: pharmacy.user._id,
       drug: drugId,
       receiptDate: invoiceDate ? new Date(invoiceDate) : new Date(),
-      receivedQuantity: quantity || amounts.reduce((sum, amt) => sum + amt, 0),
+      receivedQuantity: calculatedQuantity,
       status: "pending", // Đang chờ
       commercialInvoice: commercialInvoice._id,
     });
 
     await proofOfPharmacy.save();
+    console.log("[transferToPharmacy]  Đã tạo Proof of Pharmacy:", {
+      proofId: proofOfPharmacy._id,
+      status: proofOfPharmacy.status,
+      receivedQuantity: proofOfPharmacy.receivedQuantity,
+      commercialInvoice: proofOfPharmacy.commercialInvoice,
+    });
+
+    console.log("[transferToPharmacy]  Hoàn thành:", {
+      commercialInvoiceId: commercialInvoice._id,
+      proofOfPharmacyId: proofOfPharmacy._id,
+      pharmacyAddress: pharmacy.user.walletAddress,
+      tokenIdsCount: tokenIds.length,
+      tokenIds,
+      amountsCount: amounts.length,
+      amounts,
+    });
 
     return res.status(200).json({
       success: true,
@@ -391,7 +538,14 @@ export const transferToPharmacy = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Lỗi khi chuyển giao cho pharmacy:", error);
+    console.error("[transferToPharmacy]  Lỗi:", {
+      error: error.message,
+      stack: error.stack,
+      pharmacyId: req.body?.pharmacyId,
+      tokenIds: req.body?.tokenIds,
+      userId: req.user?._id,
+      timestamp: new Date().toISOString(),
+    });
     return res.status(500).json({
       success: false,
       message: "Lỗi server khi chuyển giao cho pharmacy",
@@ -405,7 +559,14 @@ export const saveTransferToPharmacyTransaction = async (req, res) => {
   try {
     const user = req.user;
 
+    console.log("[saveTransferToPharmacyTransaction] Bắt đầu:", {
+      userId: user._id,
+      userRole: user.role,
+      timestamp: new Date().toISOString(),
+    });
+
     if (user.role !== "distributor") {
+      console.log("[saveTransferToPharmacyTransaction]  Role không hợp lệ:", user.role);
       return res.status(403).json({
         success: false,
         message: "Chỉ có distributor mới có thể lưu transaction transfer",
@@ -418,7 +579,19 @@ export const saveTransferToPharmacyTransaction = async (req, res) => {
       tokenIds,
     } = req.body;
 
+    console.log("[saveTransferToPharmacyTransaction] Request body:", {
+      invoiceId,
+      transactionHash,
+      tokenIdsCount: Array.isArray(tokenIds) ? tokenIds.length : 0,
+      tokenIds: Array.isArray(tokenIds) ? tokenIds.slice(0, 5) : tokenIds,
+    });
+
     if (!invoiceId || !transactionHash || !tokenIds) {
+      console.log("[saveTransferToPharmacyTransaction]  Thiếu tham số:", {
+        hasInvoiceId: !!invoiceId,
+        hasTransactionHash: !!transactionHash,
+        hasTokenIds: !!tokenIds,
+      });
       return res.status(400).json({
         success: false,
         message: "invoiceId, transactionHash và tokenIds là bắt buộc",
@@ -426,40 +599,96 @@ export const saveTransferToPharmacyTransaction = async (req, res) => {
     }
 
     // Tìm invoice
+    console.log("[saveTransferToPharmacyTransaction] Đang tìm invoice...");
     const commercialInvoice = await CommercialInvoice.findById(invoiceId);
 
     if (!commercialInvoice) {
+      console.log("[saveTransferToPharmacyTransaction]  Không tìm thấy invoice:", invoiceId);
       return res.status(404).json({
         success: false,
         message: "Không tìm thấy invoice",
       });
     }
 
+    console.log("[saveTransferToPharmacyTransaction]  Tìm thấy invoice:", {
+      invoiceId: commercialInvoice._id,
+      invoiceNumber: commercialInvoice.invoiceNumber,
+      status: commercialInvoice.status,
+      fromDistributor: commercialInvoice.fromDistributor,
+      toPharmacy: commercialInvoice.toPharmacy,
+    });
+
     // Kiểm tra invoice thuộc về user này
     if (commercialInvoice.fromDistributor.toString() !== user._id.toString()) {
+      console.log("[saveTransferToPharmacyTransaction]  Không có quyền:", {
+        invoiceFromDistributor: commercialInvoice.fromDistributor.toString(),
+        userId: user._id.toString(),
+      });
       return res.status(403).json({
         success: false,
         message: "Bạn không có quyền cập nhật invoice này",
       });
     }
 
+    // Kiểm tra NFT trước khi cập nhật
+    console.log("[saveTransferToPharmacyTransaction] Kiểm tra NFT trước khi cập nhật...");
+    const existingNFTs = await NFTInfo.find({ tokenId: { $in: tokenIds } });
+    console.log("[saveTransferToPharmacyTransaction] NFT hiện tại:", {
+      requestedCount: tokenIds.length,
+      foundCount: existingNFTs.length,
+      sampleNFTs: existingNFTs.slice(0, 3).map(nft => ({
+        tokenId: nft.tokenId,
+        owner: nft.owner,
+        status: nft.status,
+        chainTxHash: nft.chainTxHash,
+      })),
+    });
+
     // Cập nhật invoice
     commercialInvoice.status = "sent";
     commercialInvoice.chainTxHash = transactionHash;
     await commercialInvoice.save();
+    console.log("[saveTransferToPharmacyTransaction]  Đã cập nhật invoice:", {
+      status: commercialInvoice.status,
+      chainTxHash: commercialInvoice.chainTxHash,
+    });
 
     // Cập nhật trạng thái NFT
-    await NFTInfo.updateMany(
+    console.log("[saveTransferToPharmacyTransaction] Đang cập nhật NFT...");
+    const updateResult = await NFTInfo.updateMany(
       { tokenId: { $in: tokenIds } },
       {
         $set: {
           status: "sold",
           owner: commercialInvoice.toPharmacy,
+          chainTxHash: transactionHash, // Lưu chainTxHash để có thể tìm lại sau này
         },
       }
     );
 
+    console.log("[saveTransferToPharmacyTransaction]  Kết quả cập nhật NFT:", {
+      matchedCount: updateResult.matchedCount,
+      modifiedCount: updateResult.modifiedCount,
+      requestedCount: tokenIds.length,
+    });
+
+    // Verify: Kiểm tra NFT đã được cập nhật đúng chưa
+    const updatedNFTs = await NFTInfo.find({ 
+      tokenId: { $in: tokenIds },
+      chainTxHash: transactionHash,
+    });
+    console.log("[saveTransferToPharmacyTransaction]  Verify NFT sau khi cập nhật:", {
+      foundWithChainTxHash: updatedNFTs.length,
+      sampleUpdatedNFTs: updatedNFTs.slice(0, 3).map(nft => ({
+        tokenId: nft.tokenId,
+        owner: nft.owner,
+        status: nft.status,
+        chainTxHash: nft.chainTxHash,
+      })),
+    });
+
     // Cập nhật Proof of Pharmacy
+    console.log("[saveTransferToPharmacyTransaction] Đang cập nhật Proof of Pharmacy...");
     const proofOfPharmacy = await ProofOfPharmacy.findOne({
       commercialInvoice: invoiceId,
     });
@@ -468,7 +697,22 @@ export const saveTransferToPharmacyTransaction = async (req, res) => {
       proofOfPharmacy.receiptTxHash = transactionHash;
       proofOfPharmacy.status = "received";
       await proofOfPharmacy.save();
+      console.log("[saveTransferToPharmacyTransaction]  Đã cập nhật Proof of Pharmacy:", {
+        proofId: proofOfPharmacy._id,
+        status: proofOfPharmacy.status,
+        receiptTxHash: proofOfPharmacy.receiptTxHash,
+      });
+    } else {
+      console.log("[saveTransferToPharmacyTransaction]  Không tìm thấy Proof of Pharmacy cho invoice:", invoiceId);
     }
+
+    console.log("[saveTransferToPharmacyTransaction]  Hoàn thành:", {
+      invoiceId: commercialInvoice._id,
+      transactionHash,
+      tokenIdsCount: tokenIds.length,
+      updatedNFTs: updateResult.modifiedCount,
+      proofOfPharmacyId: proofOfPharmacy?._id,
+    });
 
     return res.status(200).json({
       success: true,
@@ -481,7 +725,14 @@ export const saveTransferToPharmacyTransaction = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Lỗi khi lưu transaction transfer:", error);
+    console.error("[saveTransferToPharmacyTransaction]  Lỗi:", {
+      error: error.message,
+      stack: error.stack,
+      invoiceId: req.body?.invoiceId,
+      transactionHash: req.body?.transactionHash,
+      userId: req.user?._id,
+      timestamp: new Date().toISOString(),
+    });
     return res.status(500).json({
       success: false,
       message: "Lỗi server khi lưu transaction transfer",
