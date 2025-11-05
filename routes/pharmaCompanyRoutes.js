@@ -16,9 +16,6 @@ import {
   getPharmaCompanyInfo,
   getDistributors,
   getAvailableTokensForProduction,
-  getDistributions,
-  getDistributionDetail,
-  approveDistribution,
 } from "../controllers/pharmaCompanyController.js";
 import { authenticate, authorize } from "../middleware/authMiddleware.js";
 
@@ -59,11 +56,6 @@ router.get("/profile", getPharmaCompanyInfo);
 
 // ============ DANH SÁCH DISTRIBUTORS ============
 router.get("/distributors", getDistributors);
-
-// ============ QUẢN LÝ DISTRIBUTION (XÁC NHẬN QUYỀN NFT) ============
-router.get("/distributions", getDistributions);
-router.get("/distributions/:distributionId", getDistributionDetail);
-router.post("/distributions/:distributionId/approve", approveDistribution);
 
 export default router;
 

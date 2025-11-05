@@ -62,8 +62,12 @@ export const listenToDistributorToPharmacyEvent = async () => {
         const receivedTimestamp = args[3];
         
         // Lấy transaction hash từ event log
-        // Trong ethers v6, transaction hash có thể ở: eventLog.hash hoặc eventLog.transactionHash
-        const transactionHash = eventLog?.hash || eventLog?.transactionHash || eventLog?.txHash;
+        // Trong ethers v6, transaction hash thường nằm ở eventLog.log.transactionHash
+        const transactionHash = 
+          eventLog?.log?.transactionHash ||
+          eventLog?.transactionHash ||
+          eventLog?.hash ||
+          eventLog?.txHash;
         
         console.log("Nhận được event DistributorToPharmacy:");
         console.log("Distributor:", distributorAddress);
@@ -71,12 +75,12 @@ export const listenToDistributorToPharmacyEvent = async () => {
         console.log("Token IDs:", tokenIds.map((id) => id.toString()));
         console.log("Timestamp:", receivedTimestamp.toString());
         console.log("Event Log structure:", {
+          hasLogObject: !!eventLog?.log,
+          logTxHash: eventLog?.log?.transactionHash,
           hasHash: !!eventLog?.hash,
           hasTransactionHash: !!eventLog?.transactionHash,
-          hasTxHash: !!eventLog?.txHash,
           blockNumber: eventLog?.blockNumber,
           keys: eventLog ? Object.keys(eventLog) : [],
-          eventLogType: typeof eventLog,
         });
         console.log("Transaction Hash:", transactionHash || "UNDEFINED");
 
@@ -199,8 +203,15 @@ export const listenToDistributorToPharmacyEvent = async () => {
         console.log("- Transaction Hash:", transactionHash || "KHÔNG TÌM THẤY");
         
         if (!transactionHash) {
-          console.warn("⚠️ Cảnh báo: Transaction hash không có trong event. Cần kiểm tra lại cách lấy transaction hash từ event listener.");
-          console.warn("Event log object:", JSON.stringify(eventLog, null, 2));
+          console.warn("⚠️ Cảnh báo: Transaction hash không có trong event. Kiểm tra các trường hash trong event log.");
+          const safeSummary = {
+            hasLogObject: !!eventLog?.log,
+            logTxHash: eventLog?.log?.transactionHash,
+            hash: eventLog?.hash,
+            transactionHash: eventLog?.transactionHash,
+            blockNumber: eventLog?.blockNumber,
+          };
+          console.warn("Event log summary:", safeSummary);
         }
       } catch (error) {
         console.error("Lỗi khi xử lý event DistributorToPharmacy:", error);
