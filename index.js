@@ -8,10 +8,15 @@ import distributorRoutes from "./routes/distributorRoutes.js";
 import pharmacyRoutes from "./routes/pharmacyRoutes.js";
 import adminRoutes from "./routes/adminRoutes.js";
 import { listenToDistributorToPharmacyEvent } from "./services/eventListenerService.js";
+import publicRoute from "./routes/publicRoutes.js";
+import cors from "cors"
 
 dotenv.config();
 
 const app = express();
+
+  app.use(cors());
+
 const PORT = process.env.PORT || 3000;
 const MONGODB_URI = process.env.MONGODB_URI;
 
@@ -24,6 +29,7 @@ app.use("/api/pharma-company", pharmaCompanyRoutes);
 app.use("/api/distributor", distributorRoutes);
 app.use("/api/pharmacy", pharmacyRoutes);
 app.use("/api/admin", adminRoutes);
+app.use("/api/publicRoute" , publicRoute);
 
 app.get("/", (req, res) => {
   res.json({ message: "Drug Traceability Backend API" });

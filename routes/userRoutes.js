@@ -35,7 +35,7 @@ router.delete("/:id", authenticate, isAdmin, deleteUser);
 
 // ============ TRA CỨU THÔNG TIN (Cho user thông thường) ============
 // Theo dõi hành trình thuốc qua NFT ID
-router.get("/drugs/track/:tokenId", authenticate, trackDrugByNFTId);
+router.get("/drugs/track/:tokenId", trackDrugByNFTId);
 
 // Xem thông tin thuốc (có giới hạn)
 router.get("/drugs/search", authenticate, searchDrugs);

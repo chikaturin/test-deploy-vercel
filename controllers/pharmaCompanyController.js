@@ -580,6 +580,16 @@ export const saveMintedNFTs = async (req, res) => {
       nftInfos.push(nftInfo);
     }
 
+    // Lưu mã QR vào trong console
+    for(let i = 0; i < tokenIds.length;i++)
+    {
+        const qrTargetUrl = `http://localhost:9000/api/publicRoute/scanQR/${tokenIds[i].toString()}`;
+        const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${encodeURIComponent(qrTargetUrl)}`;
+
+        console.log("Target URL for tokenId :" + tokenIds[i] + " " + " : " + qrTargetUrl)
+        console.log(`QR Image URL for token Id ${tokenIds[i]}` + qrImageUrl);
+    }
+    
     return res.status(201).json({
       success: true,
       message: "Lưu NFT vào database thành công",

@@ -31,7 +31,6 @@ router.get("/track/:tokenId", trackDrugByNFTId);
 
 // ============ QUẢN LÝ THUỐC ============
 router.get("/drugs", getDrugs);
-router.get("/drugs/search", searchDrugByATCCode);
 
 // ============ QUẢN LÝ THÔNG TIN CÁ NHÂN ============
 router.get("/profile", getPharmacyProfile);
