@@ -428,8 +428,11 @@ export const getSupplyChainHistory = async (req, res) => {
     const manufacturerInvoices = await ManufacturerInvoice.find(filter)
       .populate("fromManufacturer", "username email fullName")
       .populate("toDistributor", "username email fullName")
-      .populate("drug", "tradeName atcCode")
       .populate("nftInfo")
+      .populate({
+        path: "proofOfProduction",
+        populate: { path: "drug", select: "tradeName atcCode" }
+      })
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limitNum);
@@ -440,7 +443,7 @@ export const getSupplyChainHistory = async (req, res) => {
         stageName: "Chuyển giao cho Nhà phân phối",
         id: invoice._id,
         invoiceNumber: invoice.invoiceNumber,
-        drug: invoice.drug,
+        drug: invoice.proofOfProduction?.drug || null,
         fromManufacturer: invoice.fromManufacturer,
         toDistributor: invoice.toDistributor,
         quantity: invoice.quantity,
