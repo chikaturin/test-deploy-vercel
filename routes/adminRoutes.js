@@ -3,6 +3,7 @@ import {
   getRegistrationStatistics,
   retryBlockchainRegistration,
   getAllDrugs,
+  getDrugDetails,
   getDrugStatistics,
   getSupplyChainHistory,
   getDistributionHistory,
@@ -23,6 +24,7 @@ router.post("/registration/:requestId/retry-blockchain", retryBlockchainRegistra
 // ============ QUẢN LÝ THUỐC ============
 router.get("/drugs", getAllDrugs);
 router.get("/drugs/statistics", getDrugStatistics);
+router.get("/drugs/:drugId", getDrugDetails);
 
 // ============ GIÁM SÁT HỆ THỐNG ============
 router.get("/supply-chain/history", getSupplyChainHistory);

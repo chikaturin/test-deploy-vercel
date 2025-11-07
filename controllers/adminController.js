@@ -278,6 +278,95 @@ export const getAllDrugs = async (req, res) => {
   }
 };
 
+// Xem chi tiết thuốc (Admin)
+export const getDrugDetails = async (req, res) => {
+  try {
+    const { drugId } = req.params;
+
+    const drug = await DrugInfo.findById(drugId)
+      .populate("manufacturer", "name licenseNo taxCode country address contactEmail contactPhone walletAddress status");
+
+    if (!drug) {
+      return res.status(404).json({
+        success: false,
+        message: "Không tìm thấy thuốc",
+      });
+    }
+
+    // Lấy thông tin NFTs liên quan
+    const nfts = await NFTInfo.find({ drug: drugId })
+      .select("tokenId status currentOwner createdAt mintTxHash")
+      .populate("currentOwner", "username email fullName role");
+
+    // Lấy lịch sử sản xuất
+    const productionHistory = await ProofOfProduction.find({ drug: drugId })
+      .populate("manufacturer", "name licenseNo")
+      .sort({ createdAt: -1 });
+
+    // Lấy lịch sử chuyển giao cho distributor
+    const manufacturerInvoices = await ManufacturerInvoice.find({})
+      .populate({
+        path: "proofOfProduction",
+        match: { drug: drugId },
+        populate: { path: "drug" }
+      })
+      .populate("fromManufacturer", "username email fullName")
+      .populate("toDistributor", "username email fullName")
+      .sort({ createdAt: -1 });
+
+    const filteredManufacturerInvoices = manufacturerInvoices.filter(
+      (invoice) => invoice.proofOfProduction && invoice.proofOfProduction.drug
+    );
+
+    // Lấy lịch sử chuyển giao cho pharmacy
+    const commercialInvoices = await CommercialInvoice.find({ drug: drugId })
+      .populate("fromDistributor", "username email fullName")
+      .populate("toPharmacy", "username email fullName")
+      .populate("nftInfo")
+      .sort({ createdAt: -1 });
+
+    // Thống kê NFT theo status
+    const nftStats = {
+      total: nfts.length,
+      byStatus: {
+        minted: nfts.filter((nft) => nft.status === "minted").length,
+        transferred: nfts.filter((nft) => nft.status === "transferred").length,
+        sold: nfts.filter((nft) => nft.status === "sold").length,
+        expired: nfts.filter((nft) => nft.status === "expired").length,
+        recalled: nfts.filter((nft) => nft.status === "recalled").length,
+      },
+    };
+
+    // Thống kê số lượng đã sản xuất
+    const totalProduced = productionHistory.reduce((sum, prod) => sum + (prod.quantity || 0), 0);
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        drug,
+        nfts,
+        nftStats,
+        productionHistory,
+        manufacturerInvoices: filteredManufacturerInvoices,
+        commercialInvoices,
+        statistics: {
+          totalProduced,
+          totalNFTs: nfts.length,
+          totalManufacturerInvoices: filteredManufacturerInvoices.length,
+          totalCommercialInvoices: commercialInvoices.length,
+        },
+      },
+    });
+  } catch (error) {
+    console.error("Lỗi khi lấy chi tiết thuốc:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Lỗi server khi lấy chi tiết thuốc",
+      error: error.message,
+    });
+  }
+};
+
 // Thống kê thuốc
 export const getDrugStatistics = async (req, res) => {
   try {
