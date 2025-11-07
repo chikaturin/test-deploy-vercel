@@ -8,6 +8,9 @@ import {
   getSupplyChainHistory,
   getDistributionHistory,
   getSystemStatistics,
+  getBatchList,
+  getBatchJourney,
+  getNFTJourney,
 } from "../controllers/adminController.js";
 import { authenticate, isAdmin } from "../middleware/authMiddleware.js";
 
@@ -30,6 +33,11 @@ router.get("/drugs/:drugId", getDrugDetails);
 router.get("/supply-chain/history", getSupplyChainHistory);
 router.get("/distribution/history", getDistributionHistory);
 router.get("/statistics", getSystemStatistics);
+
+// ============ BATCH TRACKING ============
+router.get("/batch-tracking/batches", getBatchList);
+router.get("/batch-tracking/batches/:batchNumber/journey", getBatchJourney);
+router.get("/batch-tracking/nft/:tokenId/journey", getNFTJourney);
 
 export default router;
 
