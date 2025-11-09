@@ -13,6 +13,11 @@ import BusinessEntityFactory from "../services/factories/BusinessEntityFactory.j
 import QueryBuilderFactory from "../services/factories/QueryBuilderFactory.js";
 import { DateHelper, DataAggregationService, StatisticsCalculationService, NFTService, ValidationService } from "../services/utils/index.js";
 import { sendValidationError } from "../utils/validationResponse.js";
+import ResponseFormatterFactory from "../services/factories/ResponseFormatterFactory.js";
+import { validateRole } from "../utils/RoleValidationHelper.js";
+import { checkEntityExistsWithMessage } from "../utils/EntityNotFoundHelper.js";
+import { getUserPopulateFields, getDrugPopulateFields } from "../utils/PopulateHelper.js";
+import { getDefaultSort } from "../utils/SortHelper.js";
 
 
 export const getInvoicesFromManufacturer = async (req, res) => {
@@ -25,30 +30,24 @@ export const getInvoicesFromManufacturer = async (req, res) => {
     });
 
     const { page, limit, skip } = QueryBuilderFactory.createPaginationOptions(req.query);
-    const limitNum = limit;
-    const pageNum = page;
 
     const invoices = await ManufacturerInvoice.find(filter)
-      .populate("fromManufacturer", "username email fullName")
+      .populate("fromManufacturer", getUserPopulateFields())
       .populate("proofOfProduction")
-      .sort({ createdAt: -1 })
+      .sort(getDefaultSort())
       .skip(skip)
-      .limit(limitNum);
+      .limit(limit);
 
     const total = await ManufacturerInvoice.countDocuments(filter);
 
-    return res.status(200).json({
-      success: true,
-      data: {
-        invoices,
-        pagination: {
-          page: pageNum,
-          limit: limitNum,
-          total,
-          pages: Math.ceil(total / limitNum),
-        },
-      },
-    });
+    return res.status(200).json(
+      ResponseFormatterFactory.formatPaginatedResponse(
+        { invoices },
+        total,
+        page,
+        limit
+      )
+    );
   } catch (error) {
     return handleError(error, "Lỗi khi lấy danh sách đơn hàng:", res, "Lỗi server khi lấy danh sách đơn hàng");
   }
@@ -59,12 +58,8 @@ export const getInvoiceDetail = async (req, res) => {
     const user = req.user;
     const { invoiceId } = req.params;
 
-    if (user.role !== "distributor") {
-      return res.status(403).json({
-        success: false,
-        message: "Chỉ có distributor mới có thể xem chi tiết invoice",
-      });
-    }
+    const roleError = validateRole(user, "distributor", res);
+    if (roleError) return roleError;
 
     // Tìm invoice
     const invoice = await ManufacturerInvoice.findById(invoiceId)
@@ -122,12 +117,8 @@ export const confirmReceipt = async (req, res) => {
   try {
     const user = req.user;
 
-    if (user.role !== "distributor") {
-      return res.status(403).json({
-        success: false,
-        message: "Chỉ có distributor mới có thể xác nhận nhận hàng",
-      });
-    }
+    const roleError = validateRole(user, "distributor", res);
+    if (roleError) return roleError;
 
     const {
       invoiceId,
@@ -230,20 +221,12 @@ export const transferToPharmacy = async (req, res) => {
       timestamp: new Date().toISOString(),
     });
 
-    if (user.role !== "distributor") {
-      console.log("[transferToPharmacy]  Role không hợp lệ:", user.role);
-      return res.status(403).json({
-        success: false,
-        message: "Chỉ có distributor mới có thể chuyển giao cho pharmacy",
-      });
-    }
+    const roleError = validateRole(user, "distributor", res);
+    if (roleError) return roleError;
 
-    if (!user.walletAddress) {
-      console.log("[transferToPharmacy]  User chưa có wallet address");
-      return res.status(400).json({
-        success: false,
-        message: "User chưa có wallet address",
-      });
+    const userWalletValidation = ValidationService.validateWalletAddress(user.walletAddress);
+    if (!userWalletValidation.valid) {
+      return sendValidationError(res, "User chưa có wallet address");
     }
 
     const {
@@ -324,9 +307,8 @@ export const transferToPharmacy = async (req, res) => {
       hasUserWallet: !!pharmacy.user?.walletAddress,
     });
 
-    const walletValidation = ValidationService.validateWalletAddress(pharmacy.user.walletAddress);
-    if (!walletValidation.valid) {
-      console.log("[transferToPharmacy]  Pharmacy chưa có wallet address");
+    const pharmacyWalletValidation = ValidationService.validateWalletAddress(pharmacy.user.walletAddress);
+    if (!pharmacyWalletValidation.valid) {
       return sendValidationError(res, "Pharmacy chưa có wallet address");
     }
 
@@ -455,13 +437,8 @@ export const saveTransferToPharmacyTransaction = async (req, res) => {
       timestamp: new Date().toISOString(),
     });
 
-    if (user.role !== "distributor") {
-      console.log("[saveTransferToPharmacyTransaction]  Role không hợp lệ:", user.role);
-      return res.status(403).json({
-        success: false,
-        message: "Chỉ có distributor mới có thể lưu transaction transfer",
-      });
-    }
+    const roleError = validateRole(user, "distributor", res);
+    if (roleError) return roleError;
 
     const {
       invoiceId,
@@ -631,12 +608,8 @@ export const getDistributionHistory = async (req, res) => {
   try {
     const user = req.user;
 
-    if (user.role !== "distributor") {
-      return res.status(403).json({
-        success: false,
-        message: "Chỉ có distributor mới có thể xem lịch sử phân phối",
-      });
-    }
+    const roleError = validateRole(user, "distributor", res);
+    if (roleError) return roleError;
 
     const filter = QueryBuilderFactory.createProofOfDistributionFilter(user, {
       status: req.query.status,
@@ -644,30 +617,24 @@ export const getDistributionHistory = async (req, res) => {
     });
 
     const { page, limit, skip } = QueryBuilderFactory.createPaginationOptions(req.query);
-    const limitNum = limit;
-    const pageNum = page;
 
     const distributions = await ProofOfDistribution.find(filter)
       .populate("fromManufacturer", "username email fullName")
       .populate("manufacturerInvoice")
       .sort({ createdAt: -1 })
       .skip(skip)
-      .limit(limitNum);
+      .limit(limit);
 
     const total = await ProofOfDistribution.countDocuments(filter);
 
-    return res.status(200).json({
-      success: true,
-      data: {
-        distributions,
-        pagination: {
-          page: pageNum,
-          limit: limitNum,
-          total,
-          pages: Math.ceil(total / limitNum),
-        },
-      },
-    });
+    return res.status(200).json(
+      ResponseFormatterFactory.formatPaginatedResponse(
+        { distributions },
+        total,
+        page,
+        limit
+      )
+    );
   } catch (error) {
     return handleError(error, "Lỗi khi lấy lịch sử phân phối:", res, "Lỗi server khi lấy lịch sử phân phối");
   }
@@ -677,42 +644,32 @@ export const getTransferToPharmacyHistory = async (req, res) => {
   try {
     const user = req.user;
 
-    if (user.role !== "distributor") {
-      return res.status(403).json({
-        success: false,
-        message: "Chỉ có distributor mới có thể xem lịch sử chuyển giao",
-      });
-    }
+    const roleError = validateRole(user, "distributor", res);
+    if (roleError) return roleError;
 
     const filter = QueryBuilderFactory.createCommercialInvoiceFilter(user, {
       status: req.query.status,
     });
 
     const { page, limit, skip } = QueryBuilderFactory.createPaginationOptions(req.query);
-    const limitNum = limit;
-    const pageNum = page;
 
     const commercialInvoices = await CommercialInvoice.find(filter)
-      .populate("toPharmacy", "username email fullName")
-      .populate("drug", "tradeName atcCode")
-      .sort({ createdAt: -1 })
+      .populate("toPharmacy", getUserPopulateFields())
+      .populate("drug", getDrugPopulateFields())
+      .sort(getDefaultSort())
       .skip(skip)
-      .limit(limitNum);
+      .limit(limit);
 
     const total = await CommercialInvoice.countDocuments(filter);
 
-    return res.status(200).json({
-      success: true,
-      data: {
-        invoices: commercialInvoices,
-        pagination: {
-          page: pageNum,
-          limit: limitNum,
-          total,
-          pages: Math.ceil(total / limitNum),
-        },
-      },
-    });
+    return res.status(200).json(
+      ResponseFormatterFactory.formatPaginatedResponse(
+        { invoices: commercialInvoices },
+        total,
+        page,
+        limit
+      )
+    );
   } catch (error) {
     return handleError(error, "Lỗi khi lấy lịch sử chuyển giao:", res, "Lỗi server khi lấy lịch sử chuyển giao");
   }
@@ -722,12 +679,8 @@ export const getStatistics = async (req, res) => {
   try {
     const user = req.user;
 
-    if (user.role !== "distributor") {
-      return res.status(403).json({
-        success: false,
-        message: "Chỉ có distributor mới có thể xem thống kê",
-      });
-    }
+    const roleError = validateRole(user, "distributor", res);
+    if (roleError) return roleError;
 
     // Thống kê đơn hàng từ manufacturer
     const totalInvoices = await ManufacturerInvoice.countDocuments({
@@ -893,49 +846,30 @@ export const getDrugs = async (req, res) => {
   try {
     const user = req.user;
 
-    if (user.role !== "distributor") {
-      return res.status(403).json({
-        success: false,
-        message: "Chỉ có distributor mới có thể xem danh sách thuốc",
-      });
-    }
+    const roleError = validateRole(user, "distributor", res);
+    if (roleError) return roleError;
 
-    const { page = 1, limit = 10, search, status } = req.query;
+    const { search, status } = req.query;
 
-    const filter = { status: status || "active" };
-
-    if (search) {
-      filter.$or = [
-        { tradeName: { $regex: search, $options: "i" } },
-        { genericName: { $regex: search, $options: "i" } },
-        { atcCode: { $regex: search, $options: "i" } },
-      ];
-    }
-
-    const pageNum = parseInt(page);
-    const limitNum = parseInt(limit);
-    const skip = (pageNum - 1) * limitNum;
+    const filter = QueryBuilderFactory.createDrugSearchFilter({ search, status });
+    const { page, limit, skip } = QueryBuilderFactory.createPaginationOptions(req.query);
 
     const drugs = await DrugInfo.find(filter)
       .populate("manufacturer", "name")
       .sort({ createdAt: -1 })
       .skip(skip)
-      .limit(limitNum);
+      .limit(limit);
 
     const total = await DrugInfo.countDocuments(filter);
 
-    return res.status(200).json({
-      success: true,
-      data: {
-        drugs,
-        pagination: {
-          page: pageNum,
-          limit: limitNum,
-          total,
-          pages: Math.ceil(total / limitNum),
-        },
-      },
-    });
+    return res.status(200).json(
+      ResponseFormatterFactory.formatPaginatedResponse(
+        { drugs },
+        total,
+        page,
+        limit
+      )
+    );
   } catch (error) {
     return handleError(error, "Lỗi khi lấy danh sách thuốc:", res, "Lỗi server khi lấy danh sách thuốc");
   }
@@ -946,12 +880,8 @@ export const searchDrugByATCCode = async (req, res) => {
     const user = req.user;
     const { atcCode } = req.query;
 
-    if (user.role !== "distributor") {
-      return res.status(403).json({
-        success: false,
-        message: "Chỉ có distributor mới có thể tìm kiếm thuốc",
-      });
-    }
+    const roleError = validateRole(user, "distributor", res);
+    if (roleError) return roleError;
 
     if (!atcCode) {
       return res.status(400).json({
@@ -984,12 +914,8 @@ export const getDistributorInfo = async (req, res) => {
   try {
     const user = req.user;
 
-    if (user.role !== "distributor") {
-      return res.status(403).json({
-        success: false,
-        message: "Chỉ có distributor mới có thể xem thông tin",
-      });
-    }
+    const roleError = validateRole(user, "distributor", res);
+    if (roleError) return roleError;
 
     const distributor = await BusinessEntityFactory.getBusinessEntityWithValidation(
       user,
@@ -1014,48 +940,32 @@ export const getPharmacies = async (req, res) => {
   try {
     const user = req.user;
 
-    if (user.role !== "distributor") {
-      return res.status(403).json({
-        success: false,
-        message: "Chỉ có distributor mới có thể xem danh sách pharmacies",
-      });
-    }
+    const roleError = validateRole(user, "distributor", res);
+    if (roleError) return roleError;
 
-    const filter = { status: req.query.status || "active" };
+    const filter = QueryBuilderFactory.createPharmacySearchFilter({
+      status: req.query.status,
+      search: req.query.search,
+    });
 
-    if (req.query.search) {
-      filter.$or = [
-        { name: { $regex: req.query.search, $options: "i" } },
-        { licenseNo: { $regex: req.query.search, $options: "i" } },
-        { taxCode: { $regex: req.query.search, $options: "i" } },
-      ];
-    }
-
-    const pagination = QueryBuilderFactory.createPaginationOptions(req.query);
-    const limitNum = pagination.limit;
-    const pageNum = pagination.page;
-    const skip = pagination.skip;
+    const { page, limit, skip } = QueryBuilderFactory.createPaginationOptions(req.query);
 
     const pharmacies = await Pharmacy.find(filter)
-      .populate("user", "username email fullName walletAddress")
-      .sort({ createdAt: -1 })
+      .populate("user", getUserPopulateFields(true))
+      .sort(getDefaultSort())
       .skip(skip)
-      .limit(limitNum);
+      .limit(limit);
 
     const total = await Pharmacy.countDocuments(filter);
 
-    return res.status(200).json({
-      success: true,
-      data: {
-        pharmacies,
-        pagination: {
-          page: pageNum,
-          limit: limitNum,
-          total,
-          pages: Math.ceil(total / limitNum),
-        },
-      },
-    });
+    return res.status(200).json(
+      ResponseFormatterFactory.formatPaginatedResponse(
+        { pharmacies },
+        total,
+        page,
+        limit
+      )
+    );
   } catch (error) {
     return handleError(error, "Lỗi khi lấy danh sách pharmacies:", res, "Lỗi server khi lấy danh sách pharmacies");
   }
@@ -1065,12 +975,8 @@ export const distributorChartOneWeek = async (req, res) => {
   try {
     const user = req.user;
 
-    if (user.role !== "distributor") {
-      return res.status(403).json({
-        success: false,
-        message: "Chỉ có distributor mới có thể xem thống kê",
-      });
-    }
+    const roleError = validateRole(user, "distributor", res);
+    if (roleError) return roleError;
 
     const distributor = await BusinessEntityFactory.getBusinessEntityWithValidation(
       user,
@@ -1108,12 +1014,8 @@ export const distributorChartTodayYesterday = async (req, res) => {
   try {
     const user = req.user;
 
-    if (user.role !== "distributor") {
-      return res.status(403).json({
-        success: false,
-        message: "Chỉ có distributor mới có thể xem thống kê",
-      });
-    }
+    const roleError = validateRole(user, "distributor", res);
+    if (roleError) return roleError;
 
     const distributor = await BusinessEntityFactory.getBusinessEntityWithValidation(
       user,
@@ -1176,12 +1078,8 @@ export const getDistributorInvoicesByDateRange = async (req, res) => {
     const user = req.user;
     const { startDate, endDate } = req.query;
 
-    if (user.role !== "distributor") {
-      return res.status(403).json({
-        success: false,
-        message: "Chỉ có distributor mới có thể xem thống kê",
-      });
-    }
+    const roleError = validateRole(user, "distributor", res);
+    if (roleError) return roleError;
 
     const { start, end } = DateHelper.parseDateRange(startDate, endDate);
 
@@ -1237,12 +1135,8 @@ export const getDistributorDistributionsByDateRange = async (req, res) => {
     const user = req.user;
     const { startDate, endDate } = req.query;
 
-    if (user.role !== "distributor") {
-      return res.status(403).json({
-        success: false,
-        message: "Chỉ có distributor mới có thể xem thống kê",
-      });
-    }
+    const roleError = validateRole(user, "distributor", res);
+    if (roleError) return roleError;
 
     const { start, end } = DateHelper.parseDateRange(startDate, endDate);
 
@@ -1298,12 +1192,8 @@ export const getDistributorTransfersToPharmacyByDateRange = async (req, res) => 
     const user = req.user;
     const { startDate, endDate } = req.query;
 
-    if (user.role !== "distributor") {
-      return res.status(403).json({
-        success: false,
-        message: "Chỉ có distributor mới có thể xem thống kê",
-      });
-    }
+    const roleError = validateRole(user, "distributor", res);
+    if (roleError) return roleError;
 
     // Validate dates
     if (!startDate || !endDate) {
