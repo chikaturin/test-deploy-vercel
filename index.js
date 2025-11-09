@@ -7,6 +7,7 @@ import pharmaCompanyRoutes from "./routes/pharmaCompanyRoutes.js";
 import distributorRoutes from "./routes/distributorRoutes.js";
 import pharmacyRoutes from "./routes/pharmacyRoutes.js";
 import adminRoutes from "./routes/adminRoutes.js";
+import statisticsRoutes from "./routes/statisticsRoutes.js";
 import { listenToDistributorToPharmacyEvent } from "./services/eventListenerService.js";
 import publicRoute from "./routes/publicRoutes.js";
 import cors from "cors"
@@ -29,6 +30,7 @@ app.use("/api/pharma-company", pharmaCompanyRoutes);
 app.use("/api/distributor", distributorRoutes);
 app.use("/api/pharmacy", pharmacyRoutes);
 app.use("/api/admin", adminRoutes);
+app.use("/api/statistics", statisticsRoutes);
 app.use("/api/publicRoute" , publicRoute);
 
 app.get("/", (req, res) => {
