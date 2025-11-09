@@ -8,7 +8,10 @@ import {
   getDrugs,
   searchDrugByATCCode,
   getPharmacyProfile,
-  pharmaChartOneWeek
+  pharmacyChartOneWeek,
+  pharmacyChartTodayYesterday,
+  getPharmacyInvoicesByDateRange,
+  getPharmacyReceiptsByDateRange,
 } from "../controllers/pharmacyController.js";
 import { authenticate, authorize } from "../middleware/authMiddleware.js";
 
@@ -30,7 +33,11 @@ router.get("/distribution/history", getDistributionHistory);
 router.get("/statistics", getStatistics);
 router.get("/track/:tokenId", trackDrugByNFTId);
 
-router.get("/get-one-week-pharma" , pharmaChartOneWeek)
+// ============ THỐNG KÊ CHART ============
+router.get("/chart/one-week", pharmacyChartOneWeek);
+router.get("/chart/today-yesterday", pharmacyChartTodayYesterday);
+router.get("/chart/invoices-by-date-range", getPharmacyInvoicesByDateRange);
+router.get("/chart/receipts-by-date-range", getPharmacyReceiptsByDateRange);
 
 // ============ QUẢN LÝ THUỐC ============
 router.get("/drugs", getDrugs);

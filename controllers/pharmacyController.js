@@ -699,79 +699,116 @@ export const getPharmacyProfile = async (req, res) => {
 
 
 
-// Pharma Chart
+// ============ THỐNG KÊ CHART CHO PHARMACY ============
 
-export const pharmaChartOneWeek = async (req , res) => {
+// Chart 1 tuần - Thống kê đơn hàng nhận từ distributor trong 7 ngày gần nhất
+export const pharmacyChartOneWeek = async (req, res) => {
   try {
     const user = req.user;
-    // Tìm PharmaCompany theo user
-    const Pharmacy = await Pharmacy.findOne({ user: user._id });
-    if (!Pharmacy) {
+
+    if (user.role !== "pharmacy") {
+      return res.status(403).json({
+        success: false,
+        message: "Chỉ có pharmacy mới có thể xem thống kê",
+      });
+    }
+
+    const pharmacy = await Pharmacy.findOne({ user: user._id });
+    if (!pharmacy) {
       return res.status(404).json({
         success: false,
-        message: "Không tìm thấy pharma",
-        error: "Pharma not found",
+        message: "Không tìm thấy pharmacy",
+        error: "Pharmacy not found",
       });
     }
 
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-    const Distributions = await ProofOfDistribution.find({
-      toDistributor: Pharmacy._id,
+    const invoices = await CommercialInvoice.find({
+      toPharmacy: user._id,
       createdAt: { $gte: sevenDaysAgo },
-      status : "confirmed"
     })
+      .populate("fromDistributor", "username email fullName")
+      .populate("drug", "tradeName atcCode")
       .sort({ createdAt: -1 });
+
+    // Group theo ngày
+    const dailyStats = {};
+    invoices.forEach((invoice) => {
+      const date = invoice.createdAt.toISOString().split("T")[0];
+      if (!dailyStats[date]) {
+        dailyStats[date] = {
+          count: 0,
+          quantity: 0,
+          invoices: [],
+        };
+      }
+      dailyStats[date].count++;
+      dailyStats[date].quantity += invoice.quantity || 0;
+      dailyStats[date].invoices.push({
+        id: invoice._id,
+        invoiceNumber: invoice.invoiceNumber,
+        quantity: invoice.quantity,
+        status: invoice.status,
+        createdAt: invoice.createdAt,
+      });
+    });
 
     return res.status(200).json({
       success: true,
       data: {
-        Distributions,
-        count: Distributions.length,
+        invoices,
+        count: invoices.length,
         from: sevenDaysAgo,
         to: new Date(),
+        dailyStats,
       },
     });
   } catch (error) {
-    console.error("Lỗi khi lấy biểu đồ 1 tuần Distributor:", error);
+    console.error("Lỗi khi lấy biểu đồ 1 tuần pharmacy:", error);
     return res.status(500).json({
       success: false,
       message: "Lỗi server khi lấy dữ liệu biểu đồ 1 tuần",
       error: error.message,
     });
   }
-}
+};
 
-
-// So Sánh ngày hnay và ngày hqua trên lệch bao nhiêu 
-
-export const pharmaChartTodayYesterday = async (req , res) => {
+// So sánh hôm nay và hôm qua - Thống kê đơn hàng nhận từ distributor
+export const pharmacyChartTodayYesterday = async (req, res) => {
   try {
     const user = req.user;
-    // Tìm PharmaCompany theo user
-    const Pharma = await Pharmacy.findOne({ user: user._id });
-    if (!Pharma) {
-      return res.status(404).json({
+
+    if (user.role !== "pharmacy") {
+      return res.status(403).json({
         success: false,
-        message: "Không tìm thấy Pharma",
-        error: "Pharma not found",
+        message: "Chỉ có pharmacy mới có thể xem thống kê",
       });
     }
-    // Tính đúng khoảng thời gian (bắt đầu của hôm nay và hôm trước) theo timezone server
+
+    const pharmacy = await Pharmacy.findOne({ user: user._id });
+    if (!pharmacy) {
+      return res.status(404).json({
+        success: false,
+        message: "Không tìm thấy pharmacy",
+        error: "Pharmacy not found",
+      });
+    }
+
     const startOfToday = new Date();
     startOfToday.setHours(0, 0, 0, 0);
 
     const startOfYesterday = new Date(startOfToday);
     startOfYesterday.setDate(startOfYesterday.getDate() - 1);
 
-    // Đếm số production của hôm qua (từ startOfYesterday đến trước startOfToday)
-    const yesterdayCount = await ProofOfProduction.countDocuments({
-      manufacturer: pharmaCompany._id,
+    // Đếm số invoice của hôm qua
+    const yesterdayCount = await CommercialInvoice.countDocuments({
+      toPharmacy: user._id,
       createdAt: { $gte: startOfYesterday, $lt: startOfToday },
     });
 
-    // Đếm số production của hôm nay (từ startOfToday trở đi)
-    const todayCount = await ProofOfProduction.countDocuments({
-      manufacturer: pharmaCompany._id,
+    // Đếm số invoice của hôm nay
+    const todayCount = await CommercialInvoice.countDocuments({
+      toPharmacy: user._id,
       createdAt: { $gte: startOfToday },
     });
 
@@ -779,15 +816,16 @@ export const pharmaChartTodayYesterday = async (req , res) => {
     const diff = todayCount - yesterdayCount;
     let percentChange = null;
     if (yesterdayCount === 0) {
-      percentChange = todayCount === 0 ? 0 : 100; 
+      percentChange = todayCount === 0 ? 0 : 100;
     } else {
       percentChange = (diff / yesterdayCount) * 100;
     }
 
-    const todayProductions = await ProofOfProduction.find({
-      manufacturer: pharmaCompany._id,
+    const todayInvoices = await CommercialInvoice.find({
+      toPharmacy: user._id,
       createdAt: { $gte: startOfToday },
     })
+      .populate("fromDistributor", "username email fullName")
       .populate("drug", "tradeName atcCode")
       .sort({ createdAt: -1 });
 
@@ -798,8 +836,8 @@ export const pharmaChartTodayYesterday = async (req , res) => {
         yesterdayCount,
         diff,
         percentChange,
-        todayProductionsCount: todayProductions.length,
-        todayProductions: todayProductions,
+        todayInvoicesCount: todayInvoices.length,
+        todayInvoices: todayInvoices,
         period: {
           yesterdayFrom: startOfYesterday,
           yesterdayTo: new Date(startOfToday.getTime() - 1),
@@ -808,13 +846,228 @@ export const pharmaChartTodayYesterday = async (req , res) => {
         },
       },
     });
-
   } catch (error) {
-    console.error("Lỗi khi lấy biểu đồ 1 tuần pharma company:", error);
+    console.error("Lỗi khi lấy biểu đồ so sánh pharmacy:", error);
     return res.status(500).json({
       success: false,
-      message: "Lỗi server khi lấy dữ liệu biểu đồ 1 tuần",
+      message: "Lỗi server khi lấy dữ liệu biểu đồ",
       error: error.message,
     });
   }
-}
+};
+
+// Thống kê theo khoảng thời gian - CommercialInvoice
+export const getPharmacyInvoicesByDateRange = async (req, res) => {
+  try {
+    const user = req.user;
+    const { startDate, endDate } = req.query;
+
+    if (user.role !== "pharmacy") {
+      return res.status(403).json({
+        success: false,
+        message: "Chỉ có pharmacy mới có thể xem thống kê",
+      });
+    }
+
+    // Validate dates
+    if (!startDate || !endDate) {
+      return res.status(400).json({
+        success: false,
+        message: "Vui lòng cung cấp startDate và endDate",
+      });
+    }
+
+    const start = new Date(startDate);
+    start.setHours(0, 0, 0, 0);
+
+    const end = new Date(endDate);
+    end.setHours(23, 59, 59, 999);
+
+    // Validate date range
+    if (start > end) {
+      return res.status(400).json({
+        success: false,
+        message: "startDate phải nhỏ hơn hoặc bằng endDate",
+      });
+    }
+
+    const pharmacy = await Pharmacy.findOne({ user: user._id });
+    if (!pharmacy) {
+      return res.status(404).json({
+        success: false,
+        message: "Không tìm thấy pharmacy",
+      });
+    }
+
+    // Query invoices trong khoảng thời gian
+    const invoices = await CommercialInvoice.find({
+      toPharmacy: user._id,
+      createdAt: {
+        $gte: start,
+        $lte: end,
+      },
+    })
+      .populate("fromDistributor", "username email fullName")
+      .populate("drug", "tradeName atcCode")
+      .sort({ createdAt: -1 });
+
+    // Tính tổng số lượng
+    const totalQuantity = invoices.reduce((sum, inv) => sum + (inv.quantity || 0), 0);
+
+    // Group theo ngày để dễ vẽ biểu đồ
+    const dailyStats = {};
+    invoices.forEach((inv) => {
+      const date = inv.createdAt.toISOString().split("T")[0];
+      if (!dailyStats[date]) {
+        dailyStats[date] = {
+          count: 0,
+          quantity: 0,
+          invoices: [],
+        };
+      }
+      dailyStats[date].count++;
+      dailyStats[date].quantity += inv.quantity || 0;
+      dailyStats[date].invoices.push({
+        id: inv._id,
+        invoiceNumber: inv.invoiceNumber,
+        drug: inv.drug,
+        quantity: inv.quantity,
+        status: inv.status,
+        createdAt: inv.createdAt,
+      });
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        dateRange: {
+          from: start,
+          to: end,
+          days: Math.ceil((end - start) / (1000 * 60 * 60 * 24)),
+        },
+        summary: {
+          totalInvoices: invoices.length,
+          totalQuantity,
+          averagePerDay: invoices.length / Math.max(1, Math.ceil((end - start) / (1000 * 60 * 60 * 24))),
+        },
+        dailyStats,
+        invoices,
+      },
+    });
+  } catch (error) {
+    console.error("Lỗi khi thống kê theo khoảng thời gian:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Lỗi server khi thống kê",
+      error: error.message,
+    });
+  }
+};
+
+// Thống kê ProofOfPharmacy theo khoảng thời gian
+export const getPharmacyReceiptsByDateRange = async (req, res) => {
+  try {
+    const user = req.user;
+    const { startDate, endDate } = req.query;
+
+    if (user.role !== "pharmacy") {
+      return res.status(403).json({
+        success: false,
+        message: "Chỉ có pharmacy mới có thể xem thống kê",
+      });
+    }
+
+    // Validate dates
+    if (!startDate || !endDate) {
+      return res.status(400).json({
+        success: false,
+        message: "Vui lòng cung cấp startDate và endDate",
+      });
+    }
+
+    const start = new Date(startDate);
+    start.setHours(0, 0, 0, 0);
+
+    const end = new Date(endDate);
+    end.setHours(23, 59, 59, 999);
+
+    // Validate date range
+    if (start > end) {
+      return res.status(400).json({
+        success: false,
+        message: "startDate phải nhỏ hơn hoặc bằng endDate",
+      });
+    }
+
+    const pharmacy = await Pharmacy.findOne({ user: user._id });
+    if (!pharmacy) {
+      return res.status(404).json({
+        success: false,
+        message: "Không tìm thấy pharmacy",
+      });
+    }
+
+    // Query receipts trong khoảng thời gian
+    const receipts = await ProofOfPharmacy.find({
+      toPharmacy: user._id,
+      createdAt: {
+        $gte: start,
+        $lte: end,
+      },
+    })
+      .populate("fromDistributor", "username email fullName")
+      .populate("commercialInvoice")
+      .populate("drug", "tradeName atcCode")
+      .sort({ createdAt: -1 });
+
+    // Tính tổng số lượng
+    const totalQuantity = receipts.reduce((sum, rec) => sum + (rec.receivedQuantity || 0), 0);
+
+    // Group theo ngày để dễ vẽ biểu đồ
+    const dailyStats = {};
+    receipts.forEach((rec) => {
+      const date = rec.createdAt.toISOString().split("T")[0];
+      if (!dailyStats[date]) {
+        dailyStats[date] = {
+          count: 0,
+          quantity: 0,
+          receipts: [],
+        };
+      }
+      dailyStats[date].count++;
+      dailyStats[date].quantity += rec.receivedQuantity || 0;
+      dailyStats[date].receipts.push({
+        id: rec._id,
+        drug: rec.drug,
+        quantity: rec.receivedQuantity,
+        status: rec.status,
+        createdAt: rec.createdAt,
+      });
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        dateRange: {
+          from: start,
+          to: end,
+          days: Math.ceil((end - start) / (1000 * 60 * 60 * 24)),
+        },
+        summary: {
+          totalReceipts: receipts.length,
+          totalQuantity,
+          averagePerDay: receipts.length / Math.max(1, Math.ceil((end - start) / (1000 * 60 * 60 * 24))),
+        },
+        dailyStats,
+        receipts,
+      },
+    });
+  } catch (error) {
+    console.error("Lỗi khi thống kê receipts theo khoảng thời gian:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Lỗi server khi thống kê",
+      error: error.message,
+    });
+  }
+};
