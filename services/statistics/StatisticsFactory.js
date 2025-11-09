@@ -6,17 +6,8 @@ import { DistributorStatisticsStrategy } from "./DistributorStatisticsStrategy.j
 import { PharmacyStatisticsStrategy } from "./PharmacyStatisticsStrategy.js";
 import StatisticsStrategy from "./StatisticsStrategy.js";
 
-/**
- * Factory class để tạo Statistics Strategy dựa trên user role
- * Áp dụng Factory Method Pattern
- */
+
 export class StatisticsFactory {
-  /**
-   * Tạo Statistics Strategy dựa trên user và role
-   * @param {Object} user - User object từ request
-   * @returns {StatisticsStrategy} Strategy instance tương ứng với role
-   * @throws {Error} Nếu role không hợp lệ hoặc không tìm thấy business entity
-   */
   static async createStrategy(user) {
     if (!user || !user.role) {
       throw new Error("User và role là bắt buộc");
@@ -59,11 +50,6 @@ export class StatisticsFactory {
     return await this.createStrategy(user);
   }
 
-  /**
-   * Tạo Strategy cho blockchain stats (hỗ trợ nhiều role)
-   * @param {Object} user - User object từ request
-   * @returns {StatisticsStrategy} Strategy instance
-   */
   static async createStrategyForBlockchain(user) {
     // Blockchain stats có thể được xem bởi tất cả các role
     return await this.createStrategy(user);

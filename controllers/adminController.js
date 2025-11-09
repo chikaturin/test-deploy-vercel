@@ -209,50 +209,31 @@ export const retryBlockchainRegistration = async (req, res) => {
 
 export const getAllDrugs = async (req, res) => {
   try {
-    const { page = 1, limit = 10, search, status, manufacturerId } = req.query;
+    const { search, status, manufacturerId } = req.query;
 
-    const filter = {};
-
-    if (status) {
-      filter.status = status;
-    }
-
-    if (manufacturerId) {
-      filter.manufacturer = manufacturerId;
-    }
-
-    if (search) {
-      filter.$or = [
-        { tradeName: { $regex: search, $options: "i" } },
-        { genericName: { $regex: search, $options: "i" } },
-        { atcCode: { $regex: search, $options: "i" } },
-      ];
-    }
-
-    const pageNum = parseInt(page);
-    const limitNum = parseInt(limit);
-    const skip = (pageNum - 1) * limitNum;
+    const filter = QueryBuilderFactory.createDrugSearchFilter({
+      search,
+      status,
+      manufacturerId,
+    });
+    const { page, limit, skip } = QueryBuilderFactory.createPaginationOptions(req.query);
 
     const drugs = await DrugInfo.find(filter)
       .populate("manufacturer", "name licenseNo taxCode country address")
       .sort({ createdAt: -1 })
       .skip(skip)
-      .limit(limitNum);
+      .limit(limit);
 
     const total = await DrugInfo.countDocuments(filter);
 
-    return res.status(200).json({
-      success: true,
-      data: {
-        drugs,
-        pagination: {
-          page: pageNum,
-          limit: limitNum,
-          total,
-          pages: Math.ceil(total / limitNum),
-        },
-      },
-    });
+    return res.status(200).json(
+      ResponseFormatterFactory.formatPaginatedResponse(
+        { drugs },
+        total,
+        page,
+        limit
+      )
+    );
   } catch (error) {
     return handleError(error, "Lỗi khi lấy danh sách thuốc:", res, "Lỗi server khi lấy danh sách thuốc");
   }

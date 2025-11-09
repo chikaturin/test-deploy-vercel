@@ -13,6 +13,7 @@ import BusinessEntityFactory from "../services/factories/BusinessEntityFactory.j
 import QueryBuilderFactory from "../services/factories/QueryBuilderFactory.js";
 import { DateHelper, DataAggregationService, StatisticsCalculationService, NFTService, ValidationService } from "../services/utils/index.js";
 import { sendValidationError } from "../utils/validationResponse.js";
+import ResponseFormatterFactory from "../services/factories/ResponseFormatterFactory.js";
 
 export const addDrug = async (req, res) => {
   try {
@@ -225,30 +226,23 @@ export const getDrugs = async (req, res) => {
       ];
     }
 
-    const pagination = QueryBuilderFactory.createPaginationOptions(req.query);
-    const limitNum = pagination.limit;
-    const pageNum = pagination.page;
-    const skip = pagination.skip;
+    const { page, limit, skip } = QueryBuilderFactory.createPaginationOptions(req.query);
 
     const drugs = await DrugInfo.find(filter)
       .sort({ createdAt: -1 })
       .skip(skip)
-      .limit(limitNum);
+      .limit(limit);
 
     const total = await DrugInfo.countDocuments(filter);
 
-    return res.status(200).json({
-      success: true,
-      data: {
-        drugs,
-        pagination: {
-          page: pageNum,
-          limit: limitNum,
-          total,
-          pages: Math.ceil(total / limitNum),
-        },
-      },
-    });
+    return res.status(200).json(
+      ResponseFormatterFactory.formatPaginatedResponse(
+        { drugs },
+        total,
+        page,
+        limit
+      )
+    );
   } catch (error) {
     return handleError(error, "Lỗi khi lấy danh sách thuốc:", res, "Lỗi server khi lấy danh sách thuốc");
   }
@@ -929,15 +923,13 @@ export const getProductionHistory = async (req, res) => {
       }
     }
 
-    const limitNum = pagination.limit;
-    const pageNum = pagination.page;
-    const skip = pagination.skip;
+    const { page, limit, skip } = QueryBuilderFactory.createPaginationOptions(req.query);
 
     const productions = await ProofOfProduction.find(filter)
       .populate("drug", "tradeName atcCode")
       .sort({ createdAt: -1 })
       .skip(skip)
-      .limit(limitNum);
+      .limit(limit);
 
     // Thêm thông tin trạng thái chuyển giao cho mỗi production
     // Đảm bảo chỉ lấy NFT của thuốc thuộc về công ty này (companyDrugIds đã được query ở trên)
@@ -964,18 +956,14 @@ export const getProductionHistory = async (req, res) => {
 
     const total = await ProofOfProduction.countDocuments(filter);
 
-    return res.status(200).json({
-      success: true,
-      data: {
-        productions: productionsWithStatus,
-        pagination: {
-          page: pageNum,
-          limit: limitNum,
-          total,
-          pages: Math.ceil(total / limitNum),
-        },
-      },
-    });
+    return res.status(200).json(
+      ResponseFormatterFactory.formatPaginatedResponse(
+        { productions: productionsWithStatus },
+        total,
+        page,
+        limit
+      )
+    );
   } catch (error) {
     return handleError(error, "Lỗi khi lấy lịch sử sản xuất:", res, "Lỗi server khi lấy lịch sử sản xuất");
   }
@@ -998,32 +986,25 @@ export const getTransferHistory = async (req, res) => {
       search: req.query.search,
     });
 
-    const pagination = QueryBuilderFactory.createPaginationOptions(req.query);
-    const limitNum = pagination.limit;
-    const pageNum = pagination.page;
-    const skip = pagination.skip;
+    const { page, limit, skip } = QueryBuilderFactory.createPaginationOptions(req.query);
 
     const invoices = await ManufacturerInvoice.find(filter)
       .populate("toDistributor", "username email fullName")
       .populate("proofOfProduction")
       .sort({ createdAt: -1 })
       .skip(skip)
-      .limit(limitNum);
+      .limit(limit);
 
     const total = await ManufacturerInvoice.countDocuments(filter);
 
-    return res.status(200).json({
-      success: true,
-      data: {
-        invoices,
-        pagination: {
-          page: pageNum,
-          limit: limitNum,
-          total,
-          pages: Math.ceil(total / limitNum),
-        },
-      },
-    });
+    return res.status(200).json(
+      ResponseFormatterFactory.formatPaginatedResponse(
+        { invoices },
+        total,
+        page,
+        limit
+      )
+    );
   } catch (error) {
     return handleError(error, "Lỗi khi lấy lịch sử chuyển giao:", res, "Lỗi server khi lấy lịch sử chuyển giao");
   }
@@ -1203,31 +1184,24 @@ export const getDistributors = async (req, res) => {
       ];
     }
 
-    const pagination = QueryBuilderFactory.createPaginationOptions(req.query);
-    const limitNum = pagination.limit;
-    const pageNum = pagination.page;
-    const skip = pagination.skip;
+    const { page, limit, skip } = QueryBuilderFactory.createPaginationOptions(req.query);
 
     const distributors = await Distributor.find(filter)
       .populate("user", "username email fullName walletAddress")
       .sort({ createdAt: -1 })
       .skip(skip)
-      .limit(limitNum);
+      .limit(limit);
 
     const total = await Distributor.countDocuments(filter);
 
-    return res.status(200).json({
-      success: true,
-      data: {
-        distributors,
-        pagination: {
-          page: pageNum,
-          limit: limitNum,
-          total,
-          pages: Math.ceil(total / limitNum),
-        },
-      },
-    });
+    return res.status(200).json(
+      ResponseFormatterFactory.formatPaginatedResponse(
+        { distributors },
+        total,
+        page,
+        limit
+      )
+    );
   } catch (error) {
     return handleError(error, "Lỗi khi lấy danh sách distributors:", res, "Lỗi server khi lấy danh sách distributors");
   }
@@ -1248,10 +1222,7 @@ export const getDistributions = async (req, res) => {
       status: req.query.status || "confirmed",
     });
 
-    const pagination = QueryBuilderFactory.createPaginationOptions(req.query);
-    const limitNum = pagination.limit;
-    const pageNum = pagination.page;
-    const skip = pagination.skip;
+    const { page, limit, skip } = QueryBuilderFactory.createPaginationOptions(req.query);
 
     const distributions = await ProofOfDistribution.find(filter)
       .populate("toDistributor", "username email fullName walletAddress")
@@ -1259,22 +1230,18 @@ export const getDistributions = async (req, res) => {
       .populate("proofOfProduction", "batchNumber productionDate")
       .sort({ createdAt: -1 })
       .skip(skip)
-      .limit(limitNum);
+      .limit(limit);
 
     const total = await ProofOfDistribution.countDocuments(filter);
 
-    return res.status(200).json({
-      success: true,
-      data: {
-        distributions,
-        pagination: {
-          page: pageNum,
-          limit: limitNum,
-          total,
-          pages: Math.ceil(total / limitNum),
-        },
-      },
-    });
+    return res.status(200).json(
+      ResponseFormatterFactory.formatPaginatedResponse(
+        { distributions },
+        total,
+        page,
+        limit
+      )
+    );
   } catch (error) {
     return handleError(error, "Lỗi khi lấy danh sách distributions:", res, "Lỗi server khi lấy danh sách distributions");
   }

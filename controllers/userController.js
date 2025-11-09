@@ -15,26 +15,10 @@ import { handleError, handleAuthError, handleValidationError } from "../utils/er
 
 export const getAllUsers = async (req, res) => {
   try {
-    const { role, status, page = 1, limit = 10, search } = req.query;
+    const { role, status, search } = req.query;
 
-    const filter = {};
-    if (role) {
-      filter.role = role;
-    }
-    if (status) {
-      filter.status = status;
-    }
-    if (search) {
-      filter.$or = [
-        { username: { $regex: search, $options: "i" } },
-        { email: { $regex: search, $options: "i" } },
-        { fullName: { $regex: search, $options: "i" } },
-      ];
-    }
-
-    const pageNum = parseInt(page);
-    const limitNum = parseInt(limit);
-    const skip = (pageNum - 1) * limitNum;
+    const filter = QueryBuilderFactory.createUserFilter({ role, status, search });
+    const { page, limit, skip } = QueryBuilderFactory.createPaginationOptions(req.query);
 
     const users = await User.find(filter)
       .select("-password")
@@ -43,22 +27,18 @@ export const getAllUsers = async (req, res) => {
       .populate("pharmacy", "name licenseNo taxCode")
       .sort({ createdAt: -1 })
       .skip(skip)
-      .limit(limitNum);
+      .limit(limit);
 
     const total = await User.countDocuments(filter);
 
-    return res.status(200).json({
-      success: true,
-      data: {
-        users,
-        pagination: {
-          page: pageNum,
-          limit: limitNum,
-          total,
-          pages: Math.ceil(total / limitNum),
-        },
-      },
-    });
+    return res.status(200).json(
+      ResponseFormatterFactory.formatPaginatedResponse(
+        { users },
+        total,
+        page,
+        limit
+      )
+    );
   } catch (error) {
     return handleError(error, "Lỗi khi lấy danh sách người dùng:", res, "Lỗi server khi lấy danh sách người dùng");
   }
@@ -605,32 +585,17 @@ export const searchDrugs = async (req, res) => {
       });
     }
 
-    const { page = 1, limit = 10, search, atcCode, status } = req.query;
+    const { search, atcCode, status } = req.query;
 
-    const filter = { status: status || "active" };
-
-    if (search) {
-      filter.$or = [
-        { tradeName: { $regex: search, $options: "i" } },
-        { genericName: { $regex: search, $options: "i" } },
-        { atcCode: { $regex: search, $options: "i" } },
-      ];
-    }
-
-    if (atcCode) {
-      filter.atcCode = { $regex: atcCode, $options: "i" };
-    }
-
-    const pageNum = parseInt(page);
-    const limitNum = parseInt(limit);
-    const skip = (pageNum - 1) * limitNum;
+    const filter = QueryBuilderFactory.createDrugSearchFilter({ search, atcCode, status });
+    const { page, limit, skip } = QueryBuilderFactory.createPaginationOptions(req.query);
 
     const drugs = await DrugInfo.find(filter)
       .populate("manufacturer", "name country")
       .select("tradeName genericName atcCode dosageForm strength route packaging storage warnings activeIngredients status manufacturer")
       .sort({ createdAt: -1 })
       .skip(skip)
-      .limit(limitNum);
+      .limit(limit);
 
     const total = await DrugInfo.countDocuments(filter);
 
@@ -654,18 +619,14 @@ export const searchDrugs = async (req, res) => {
       status: drug.status,
     }));
 
-    return res.status(200).json({
-      success: true,
-      data: {
-        drugs: publicDrugs,
-        pagination: {
-          page: pageNum,
-          limit: limitNum,
-          total,
-          pages: Math.ceil(total / limitNum),
-        },
-      },
-    });
+    return res.status(200).json(
+      ResponseFormatterFactory.formatPaginatedResponse(
+        { drugs: publicDrugs },
+        total,
+        page,
+        limit
+      )
+    );
   } catch (error) {
     return handleError(error, "Lỗi khi tìm kiếm thuốc:", res, "Lỗi server khi tìm kiếm thuốc");
   }

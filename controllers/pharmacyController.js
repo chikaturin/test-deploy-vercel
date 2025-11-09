@@ -10,6 +10,8 @@ import { handleError } from "../utils/errorHandler.js";
 import BusinessEntityFactory from "../services/factories/BusinessEntityFactory.js";
 import QueryBuilderFactory from "../services/factories/QueryBuilderFactory.js";
 import { DateHelper, DataAggregationService, StatisticsCalculationService } from "../services/utils/index.js";
+import ResponseFormatterFactory from "../services/factories/ResponseFormatterFactory.js";
+import { validateRole } from "../utils/RoleValidationHelper.js";
 
 
 export const getInvoicesFromDistributor = async (req, res) => {
@@ -22,8 +24,6 @@ export const getInvoicesFromDistributor = async (req, res) => {
     });
 
     const { page, limit, skip } = QueryBuilderFactory.createPaginationOptions(req.query);
-    const limitNum = limit;
-    const pageNum = page;
 
     const invoices = await CommercialInvoice.find(filter)
       .populate("fromDistributor", "username email fullName")
@@ -31,22 +31,18 @@ export const getInvoicesFromDistributor = async (req, res) => {
       .populate("nftInfo")
       .sort({ createdAt: -1 })
       .skip(skip)
-      .limit(limitNum);
+      .limit(limit);
 
     const total = await CommercialInvoice.countDocuments(filter);
 
-    return res.status(200).json({
-      success: true,
-      data: {
-        invoices,
-        pagination: {
-          page: pageNum,
-          limit: limitNum,
-          total,
-          pages: Math.ceil(total / limitNum),
-        },
-      },
-    });
+    return res.status(200).json(
+      ResponseFormatterFactory.formatPaginatedResponse(
+        { invoices },
+        total,
+        page,
+        limit
+      )
+    );
   } catch (error) {
     return handleError(error, "Lỗi khi lấy danh sách đơn hàng:", res, "Lỗi server khi lấy danh sách đơn hàng");
   }
@@ -510,42 +506,27 @@ export const getDrugs = async (req, res) => {
       });
     }
 
-    const { page = 1, limit = 10, search, status } = req.query;
+    const { search, status } = req.query;
 
-    const filter = { status: status || "active" };
-
-    if (search) {
-      filter.$or = [
-        { tradeName: { $regex: search, $options: "i" } },
-        { genericName: { $regex: search, $options: "i" } },
-        { atcCode: { $regex: search, $options: "i" } },
-      ];
-    }
-
-    const pageNum = parseInt(page);
-    const limitNum = parseInt(limit);
-    const skip = (pageNum - 1) * limitNum;
+    const filter = QueryBuilderFactory.createDrugSearchFilter({ search, status });
+    const { page, limit, skip } = QueryBuilderFactory.createPaginationOptions(req.query);
 
     const drugs = await DrugInfo.find(filter)
       .populate("manufacturer", "name")
       .sort({ createdAt: -1 })
       .skip(skip)
-      .limit(limitNum);
+      .limit(limit);
 
     const total = await DrugInfo.countDocuments(filter);
 
-    return res.status(200).json({
-      success: true,
-      data: {
-        drugs,
-        pagination: {
-          page: pageNum,
-          limit: limitNum,
-          total,
-          pages: Math.ceil(total / limitNum),
-        },
-      },
-    });
+    return res.status(200).json(
+      ResponseFormatterFactory.formatPaginatedResponse(
+        { drugs },
+        total,
+        page,
+        limit
+      )
+    );
   } catch (error) {
     return handleError(error, "Lỗi khi lấy danh sách thuốc:", res, "Lỗi server khi lấy danh sách thuốc");
   }

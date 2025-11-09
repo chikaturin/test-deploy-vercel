@@ -11,7 +11,6 @@ export class ResponseFormatterFactory {
     };
   }
 
-
   static formatSuccessResponse(data, message = null) {
     const response = {
       success: true,
@@ -24,7 +23,6 @@ export class ResponseFormatterFactory {
 
     return response;
   }
-
 
   static formatListResponse(items, total, page, limit, itemName = "items") {
     return {
@@ -45,6 +43,29 @@ export class ResponseFormatterFactory {
     return {
       success: true,
       data: stats,
+    };
+  }
+
+  /**
+   * Format paginated response với custom data structure
+   * @param {Object} data - Data object với items
+   * @param {Number} total - Total count
+   * @param {Number} page - Current page
+   * @param {Number} limit - Items per page
+   * @returns {Object} Formatted response
+   */
+  static formatPaginatedResponse(data, total, page, limit) {
+    return {
+      success: true,
+      data: {
+        ...data,
+        pagination: {
+          page,
+          limit,
+          total,
+          pages: Math.ceil(total / limit),
+        },
+      },
     };
   }
 }
