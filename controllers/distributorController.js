@@ -1249,3 +1249,481 @@ export const getPharmacies = async (req, res) => {
   }
 };
 
+// ============ THỐNG KÊ CHART CHO DISTRIBUTOR ============
+
+// Chart 1 tuần - Thống kê đơn hàng nhận từ manufacturer trong 7 ngày gần nhất
+export const distributorChartOneWeek = async (req, res) => {
+  try {
+    const user = req.user;
+
+    if (user.role !== "distributor") {
+      return res.status(403).json({
+        success: false,
+        message: "Chỉ có distributor mới có thể xem thống kê",
+      });
+    }
+
+    const distributor = await Distributor.findOne({ user: user._id });
+    if (!distributor) {
+      return res.status(404).json({
+        success: false,
+        message: "Không tìm thấy distributor",
+        error: "Distributor not found",
+      });
+    }
+
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const invoices = await ManufacturerInvoice.find({
+      toDistributor: user._id,
+      createdAt: { $gte: sevenDaysAgo },
+    })
+      .populate("fromManufacturer", "username email fullName")
+      .populate("proofOfProduction")
+      .sort({ createdAt: -1 });
+
+    // Group theo ngày
+    const dailyStats = {};
+    invoices.forEach((invoice) => {
+      const date = invoice.createdAt.toISOString().split("T")[0];
+      if (!dailyStats[date]) {
+        dailyStats[date] = {
+          count: 0,
+          quantity: 0,
+          invoices: [],
+        };
+      }
+      dailyStats[date].count++;
+      dailyStats[date].quantity += invoice.quantity || 0;
+      dailyStats[date].invoices.push({
+        id: invoice._id,
+        invoiceNumber: invoice.invoiceNumber,
+        quantity: invoice.quantity,
+        status: invoice.status,
+        createdAt: invoice.createdAt,
+      });
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        invoices,
+        count: invoices.length,
+        from: sevenDaysAgo,
+        to: new Date(),
+        dailyStats,
+      },
+    });
+  } catch (error) {
+    console.error("Lỗi khi lấy biểu đồ 1 tuần distributor:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Lỗi server khi lấy dữ liệu biểu đồ 1 tuần",
+      error: error.message,
+    });
+  }
+};
+
+// So sánh hôm nay và hôm qua - Thống kê đơn hàng nhận từ manufacturer
+export const distributorChartTodayYesterday = async (req, res) => {
+  try {
+    const user = req.user;
+
+    if (user.role !== "distributor") {
+      return res.status(403).json({
+        success: false,
+        message: "Chỉ có distributor mới có thể xem thống kê",
+      });
+    }
+
+    const distributor = await Distributor.findOne({ user: user._id });
+    if (!distributor) {
+      return res.status(404).json({
+        success: false,
+        message: "Không tìm thấy distributor",
+        error: "Distributor not found",
+      });
+    }
+
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+
+    const startOfYesterday = new Date(startOfToday);
+    startOfYesterday.setDate(startOfYesterday.getDate() - 1);
+
+    // Đếm số invoice của hôm qua
+    const yesterdayCount = await ManufacturerInvoice.countDocuments({
+      toDistributor: user._id,
+      createdAt: { $gte: startOfYesterday, $lt: startOfToday },
+    });
+
+    // Đếm số invoice của hôm nay
+    const todayCount = await ManufacturerInvoice.countDocuments({
+      toDistributor: user._id,
+      createdAt: { $gte: startOfToday },
+    });
+
+    // Tính chênh lệch và phần trăm thay đổi
+    const diff = todayCount - yesterdayCount;
+    let percentChange = null;
+    if (yesterdayCount === 0) {
+      percentChange = todayCount === 0 ? 0 : 100;
+    } else {
+      percentChange = (diff / yesterdayCount) * 100;
+    }
+
+    const todayInvoices = await ManufacturerInvoice.find({
+      toDistributor: user._id,
+      createdAt: { $gte: startOfToday },
+    })
+      .populate("fromManufacturer", "username email fullName")
+      .populate("proofOfProduction")
+      .sort({ createdAt: -1 });
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        todayCount,
+        yesterdayCount,
+        diff,
+        percentChange,
+        todayInvoicesCount: todayInvoices.length,
+        todayInvoices: todayInvoices,
+        period: {
+          yesterdayFrom: startOfYesterday,
+          yesterdayTo: new Date(startOfToday.getTime() - 1),
+          todayFrom: startOfToday,
+          now: new Date(),
+        },
+      },
+    });
+  } catch (error) {
+    console.error("Lỗi khi lấy biểu đồ so sánh distributor:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Lỗi server khi lấy dữ liệu biểu đồ",
+      error: error.message,
+    });
+  }
+};
+
+// Thống kê đơn hàng nhận từ manufacturer theo khoảng thời gian
+export const getDistributorInvoicesByDateRange = async (req, res) => {
+  try {
+    const user = req.user;
+    const { startDate, endDate } = req.query;
+
+    if (user.role !== "distributor") {
+      return res.status(403).json({
+        success: false,
+        message: "Chỉ có distributor mới có thể xem thống kê",
+      });
+    }
+
+    // Validate dates
+    if (!startDate || !endDate) {
+      return res.status(400).json({
+        success: false,
+        message: "Vui lòng cung cấp startDate và endDate",
+      });
+    }
+
+    const start = new Date(startDate);
+    start.setHours(0, 0, 0, 0);
+
+    const end = new Date(endDate);
+    end.setHours(23, 59, 59, 999);
+
+    // Validate date range
+    if (start > end) {
+      return res.status(400).json({
+        success: false,
+        message: "startDate phải nhỏ hơn hoặc bằng endDate",
+      });
+    }
+
+    const distributor = await Distributor.findOne({ user: user._id });
+    if (!distributor) {
+      return res.status(404).json({
+        success: false,
+        message: "Không tìm thấy distributor",
+      });
+    }
+
+    // Query invoices từ manufacturer trong khoảng thời gian
+    const invoices = await ManufacturerInvoice.find({
+      toDistributor: user._id,
+      createdAt: {
+        $gte: start,
+        $lte: end,
+      },
+    })
+      .populate("fromManufacturer", "username email fullName")
+      .populate("proofOfProduction")
+      .sort({ createdAt: -1 });
+
+    // Tính tổng số lượng
+    const totalQuantity = invoices.reduce((sum, inv) => sum + (inv.quantity || 0), 0);
+
+    // Group theo ngày để dễ vẽ biểu đồ
+    const dailyStats = {};
+    invoices.forEach((inv) => {
+      const date = inv.createdAt.toISOString().split("T")[0];
+      if (!dailyStats[date]) {
+        dailyStats[date] = {
+          count: 0,
+          quantity: 0,
+          invoices: [],
+        };
+      }
+      dailyStats[date].count++;
+      dailyStats[date].quantity += inv.quantity || 0;
+      dailyStats[date].invoices.push({
+        id: inv._id,
+        invoiceNumber: inv.invoiceNumber,
+        quantity: inv.quantity,
+        status: inv.status,
+        createdAt: inv.createdAt,
+      });
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        dateRange: {
+          from: start,
+          to: end,
+          days: Math.ceil((end - start) / (1000 * 60 * 60 * 24)),
+        },
+        summary: {
+          totalInvoices: invoices.length,
+          totalQuantity,
+          averagePerDay: invoices.length / Math.max(1, Math.ceil((end - start) / (1000 * 60 * 60 * 24))),
+        },
+        dailyStats,
+        invoices,
+      },
+    });
+  } catch (error) {
+    console.error("Lỗi khi thống kê invoices theo khoảng thời gian:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Lỗi server khi thống kê",
+      error: error.message,
+    });
+  }
+};
+
+// Thống kê ProofOfDistribution theo khoảng thời gian
+export const getDistributorDistributionsByDateRange = async (req, res) => {
+  try {
+    const user = req.user;
+    const { startDate, endDate } = req.query;
+
+    if (user.role !== "distributor") {
+      return res.status(403).json({
+        success: false,
+        message: "Chỉ có distributor mới có thể xem thống kê",
+      });
+    }
+
+    // Validate dates
+    if (!startDate || !endDate) {
+      return res.status(400).json({
+        success: false,
+        message: "Vui lòng cung cấp startDate và endDate",
+      });
+    }
+
+    const start = new Date(startDate);
+    start.setHours(0, 0, 0, 0);
+
+    const end = new Date(endDate);
+    end.setHours(23, 59, 59, 999);
+
+    // Validate date range
+    if (start > end) {
+      return res.status(400).json({
+        success: false,
+        message: "startDate phải nhỏ hơn hoặc bằng endDate",
+      });
+    }
+
+    const distributor = await Distributor.findOne({ user: user._id });
+    if (!distributor) {
+      return res.status(404).json({
+        success: false,
+        message: "Không tìm thấy distributor",
+      });
+    }
+
+    // Query distributions trong khoảng thời gian
+    const distributions = await ProofOfDistribution.find({
+      toDistributor: user._id,
+      createdAt: {
+        $gte: start,
+        $lte: end,
+      },
+    })
+      .populate("fromManufacturer", "username email fullName")
+      .populate("manufacturerInvoice")
+      .sort({ createdAt: -1 });
+
+    // Tính tổng số lượng
+    const totalQuantity = distributions.reduce((sum, dist) => sum + (dist.distributedQuantity || 0), 0);
+
+    // Group theo ngày để dễ vẽ biểu đồ
+    const dailyStats = {};
+    distributions.forEach((dist) => {
+      const date = dist.createdAt.toISOString().split("T")[0];
+      if (!dailyStats[date]) {
+        dailyStats[date] = {
+          count: 0,
+          quantity: 0,
+          distributions: [],
+        };
+      }
+      dailyStats[date].count++;
+      dailyStats[date].quantity += dist.distributedQuantity || 0;
+      dailyStats[date].distributions.push({
+        id: dist._id,
+        quantity: dist.distributedQuantity,
+        status: dist.status,
+        createdAt: dist.createdAt,
+      });
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        dateRange: {
+          from: start,
+          to: end,
+          days: Math.ceil((end - start) / (1000 * 60 * 60 * 24)),
+        },
+        summary: {
+          totalDistributions: distributions.length,
+          totalQuantity,
+          averagePerDay: distributions.length / Math.max(1, Math.ceil((end - start) / (1000 * 60 * 60 * 24))),
+        },
+        dailyStats,
+        distributions,
+      },
+    });
+  } catch (error) {
+    console.error("Lỗi khi thống kê distributions theo khoảng thời gian:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Lỗi server khi thống kê",
+      error: error.message,
+    });
+  }
+};
+
+// Thống kê đơn hàng chuyển cho pharmacy theo khoảng thời gian
+export const getDistributorTransfersToPharmacyByDateRange = async (req, res) => {
+  try {
+    const user = req.user;
+    const { startDate, endDate } = req.query;
+
+    if (user.role !== "distributor") {
+      return res.status(403).json({
+        success: false,
+        message: "Chỉ có distributor mới có thể xem thống kê",
+      });
+    }
+
+    // Validate dates
+    if (!startDate || !endDate) {
+      return res.status(400).json({
+        success: false,
+        message: "Vui lòng cung cấp startDate và endDate",
+      });
+    }
+
+    const start = new Date(startDate);
+    start.setHours(0, 0, 0, 0);
+
+    const end = new Date(endDate);
+    end.setHours(23, 59, 59, 999);
+
+    // Validate date range
+    if (start > end) {
+      return res.status(400).json({
+        success: false,
+        message: "startDate phải nhỏ hơn hoặc bằng endDate",
+      });
+    }
+
+    const distributor = await Distributor.findOne({ user: user._id });
+    if (!distributor) {
+      return res.status(404).json({
+        success: false,
+        message: "Không tìm thấy distributor",
+      });
+    }
+
+    // Query commercial invoices (chuyển cho pharmacy) trong khoảng thời gian
+    const commercialInvoices = await CommercialInvoice.find({
+      fromDistributor: user._id,
+      createdAt: {
+        $gte: start,
+        $lte: end,
+      },
+    })
+      .populate("toPharmacy", "username email fullName")
+      .populate("drug", "tradeName atcCode")
+      .sort({ createdAt: -1 });
+
+    // Tính tổng số lượng
+    const totalQuantity = commercialInvoices.reduce((sum, inv) => sum + (inv.quantity || 0), 0);
+
+    // Group theo ngày để dễ vẽ biểu đồ
+    const dailyStats = {};
+    commercialInvoices.forEach((inv) => {
+      const date = inv.createdAt.toISOString().split("T")[0];
+      if (!dailyStats[date]) {
+        dailyStats[date] = {
+          count: 0,
+          quantity: 0,
+          invoices: [],
+        };
+      }
+      dailyStats[date].count++;
+      dailyStats[date].quantity += inv.quantity || 0;
+      dailyStats[date].invoices.push({
+        id: inv._id,
+        invoiceNumber: inv.invoiceNumber,
+        drug: inv.drug,
+        quantity: inv.quantity,
+        status: inv.status,
+        createdAt: inv.createdAt,
+      });
+    });
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        dateRange: {
+          from: start,
+          to: end,
+          days: Math.ceil((end - start) / (1000 * 60 * 60 * 24)),
+        },
+        summary: {
+          totalInvoices: commercialInvoices.length,
+          totalQuantity,
+          averagePerDay: commercialInvoices.length / Math.max(1, Math.ceil((end - start) / (1000 * 60 * 60 * 24))),
+        },
+        dailyStats,
+        invoices: commercialInvoices,
+      },
+    });
+  } catch (error) {
+    console.error("Lỗi khi thống kê transfers to pharmacy theo khoảng thời gian:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Lỗi server khi thống kê",
+      error: error.message,
+    });
+  }
+};
+

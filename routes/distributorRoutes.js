@@ -13,6 +13,11 @@ import {
   getDistributorInfo,
   getPharmacies,
   getInvoiceDetail,
+  distributorChartOneWeek,
+  distributorChartTodayYesterday,
+  getDistributorInvoicesByDateRange,
+  getDistributorDistributionsByDateRange,
+  getDistributorTransfersToPharmacyByDateRange,
 } from "../controllers/distributorController.js";
 import { authenticate, authorize } from "../middleware/authMiddleware.js";
 
@@ -39,6 +44,13 @@ router.get("/distribution/history", getDistributionHistory);
 router.get("/transfer/history", getTransferToPharmacyHistory);
 router.get("/statistics", getStatistics);
 router.get("/track/:tokenId", trackDrugByNFTId);
+
+// ============ THỐNG KÊ CHART ============
+router.get("/chart/one-week", distributorChartOneWeek);
+router.get("/chart/today-yesterday", distributorChartTodayYesterday);
+router.get("/chart/invoices-by-date-range", getDistributorInvoicesByDateRange);
+router.get("/chart/distributions-by-date-range", getDistributorDistributionsByDateRange);
+router.get("/chart/transfers-to-pharmacy-by-date-range", getDistributorTransfersToPharmacyByDateRange);
 
 // ============ QUẢN LÝ THUỐC ============
 router.get("/drugs", getDrugs);
