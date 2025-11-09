@@ -650,6 +650,24 @@ export const getTransferToPharmacyHistory = async (req, res) => {
     const filter = QueryBuilderFactory.createCommercialInvoiceFilter(user, {
       status: req.query.status,
     });
+    if (req.query.search) {
+      const pharmacies = await Pharmacy.find({
+        name: { $regex: req.query.search, $options: "i" },
+      }).select("user");
+      
+      const pharmacyUserIds = pharmacies.map(p => p.user).filter(Boolean);
+      
+      if (pharmacyUserIds.length > 0) {
+        filter.$or = [
+          { toPharmacy: { $in: pharmacyUserIds } },
+          { invoiceNumber: { $regex: req.query.search, $options: "i" } },
+        ];
+      } else {
+        filter.$or = [
+          { invoiceNumber: { $regex: req.query.search, $options: "i" } },
+        ];
+      }
+    }
 
     const { page, limit, skip } = QueryBuilderFactory.createPaginationOptions(req.query);
 
