@@ -17,10 +17,11 @@ import {
   getDistributors,
   getAvailableTokensForProduction,
   pharmaCompanyChart1Week,
-  pharmaCompanyChartTodayYesterday ,
-  getProofOfProductionByDateRange ,
+  pharmaCompanyChartTodayYesterday,
+  getProofOfProductionByDateRange,
   getProofOfDistributionByDateRange,
-  getManufactureIPFSStatus
+  getManufactureIPFSStatus,
+  getManufacturerTransfersByDateRange,
 } from "../controllers/pharmaCompanyController.js";
 import { authenticate, authorize } from "../middleware/authMiddleware.js";
 
@@ -56,27 +57,21 @@ router.get("/production/:productionId/available-tokens", getAvailableTokensForPr
 router.get("/transfer/history", getTransferHistory);
 router.get("/statistics", getStatistics);
 
-// CHARTS
-
-router.get("/get-one-week-chart" , pharmaCompanyChart1Week)
-
-router.get("/today-yesterday-chart" , pharmaCompanyChartTodayYesterday)
-
-router.get("/get-proof-of-productions-chart" , getProofOfProductionByDateRange);
-
-router.get("/get-proof-of-distributions-chart" , getProofOfDistributionByDateRange);
+// ============ THỐNG KÊ CHART ============
+router.get("/chart/one-week", pharmaCompanyChart1Week);
+router.get("/chart/today-yesterday", pharmaCompanyChartTodayYesterday);
+router.get("/chart/productions-by-date-range", getProofOfProductionByDateRange);
+router.get("/chart/distributions-by-date-range", getProofOfDistributionByDateRange);
+router.get("/chart/transfers-by-date-range", getManufacturerTransfersByDateRange);
 
 // ============ QUẢN LÝ THÔNG TIN CÁ NHÂN ============
-
 router.get("/profile", getPharmaCompanyInfo);
 
 // ============ DANH SÁCH DISTRIBUTORS ============
 router.get("/distributors", getDistributors);
 
-
-// Lấy danh sách Manufacture IPFS
-
-router.get("/getManufactureIPFS" , getManufactureIPFSStatus)
+// ============ QUẢN LÝ IPFS ============
+router.get("/ipfs-status", getManufactureIPFSStatus);
 
 export default router;
 
