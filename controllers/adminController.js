@@ -278,6 +278,95 @@ export const getAllDrugs = async (req, res) => {
   }
 };
 
+// Xem chi tiết thuốc (Admin)
+export const getDrugDetails = async (req, res) => {
+  try {
+    const { drugId } = req.params;
+
+    const drug = await DrugInfo.findById(drugId)
+      .populate("manufacturer", "name licenseNo taxCode country address contactEmail contactPhone walletAddress status");
+
+    if (!drug) {
+      return res.status(404).json({
+        success: false,
+        message: "Không tìm thấy thuốc",
+      });
+    }
+
+    // Lấy thông tin NFTs liên quan
+    const nfts = await NFTInfo.find({ drug: drugId })
+      .select("tokenId serialNumber batchNumber status owner createdAt chainTxHash mfgDate expDate quantity unit")
+      .populate("owner", "username email fullName role");
+
+    // Lấy lịch sử sản xuất
+    const productionHistory = await ProofOfProduction.find({ drug: drugId })
+      .populate("manufacturer", "name licenseNo")
+      .sort({ createdAt: -1 });
+
+    // Lấy lịch sử chuyển giao cho distributor
+    const manufacturerInvoices = await ManufacturerInvoice.find({})
+      .populate({
+        path: "proofOfProduction",
+        match: { drug: drugId },
+        populate: { path: "drug" }
+      })
+      .populate("fromManufacturer", "username email fullName")
+      .populate("toDistributor", "username email fullName")
+      .sort({ createdAt: -1 });
+
+    const filteredManufacturerInvoices = manufacturerInvoices.filter(
+      (invoice) => invoice.proofOfProduction && invoice.proofOfProduction.drug
+    );
+
+    // Lấy lịch sử chuyển giao cho pharmacy
+    const commercialInvoices = await CommercialInvoice.find({ drug: drugId })
+      .populate("fromDistributor", "username email fullName")
+      .populate("toPharmacy", "username email fullName")
+      .populate("nftInfo")
+      .sort({ createdAt: -1 });
+
+    // Thống kê NFT theo status
+    const nftStats = {
+      total: nfts.length,
+      byStatus: {
+        minted: nfts.filter((nft) => nft.status === "minted").length,
+        transferred: nfts.filter((nft) => nft.status === "transferred").length,
+        sold: nfts.filter((nft) => nft.status === "sold").length,
+        expired: nfts.filter((nft) => nft.status === "expired").length,
+        recalled: nfts.filter((nft) => nft.status === "recalled").length,
+      },
+    };
+
+    // Thống kê số lượng đã sản xuất
+    const totalProduced = productionHistory.reduce((sum, prod) => sum + (prod.quantity || 0), 0);
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        drug,
+        nfts,
+        nftStats,
+        productionHistory,
+        manufacturerInvoices: filteredManufacturerInvoices,
+        commercialInvoices,
+        statistics: {
+          totalProduced,
+          totalNFTs: nfts.length,
+          totalManufacturerInvoices: filteredManufacturerInvoices.length,
+          totalCommercialInvoices: commercialInvoices.length,
+        },
+      },
+    });
+  } catch (error) {
+    console.error("Lỗi khi lấy chi tiết thuốc:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Lỗi server khi lấy chi tiết thuốc",
+      error: error.message,
+    });
+  }
+};
+
 // Thống kê thuốc
 export const getDrugStatistics = async (req, res) => {
   try {
@@ -428,8 +517,11 @@ export const getSupplyChainHistory = async (req, res) => {
     const manufacturerInvoices = await ManufacturerInvoice.find(filter)
       .populate("fromManufacturer", "username email fullName")
       .populate("toDistributor", "username email fullName")
-      .populate("drug", "tradeName atcCode")
       .populate("nftInfo")
+      .populate({
+        path: "proofOfProduction",
+        populate: { path: "drug", select: "tradeName atcCode" }
+      })
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(limitNum);
@@ -440,7 +532,7 @@ export const getSupplyChainHistory = async (req, res) => {
         stageName: "Chuyển giao cho Nhà phân phối",
         id: invoice._id,
         invoiceNumber: invoice.invoiceNumber,
-        drug: invoice.drug,
+        drug: invoice.proofOfProduction?.drug || null,
         fromManufacturer: invoice.fromManufacturer,
         toDistributor: invoice.toDistributor,
         quantity: invoice.quantity,
@@ -765,6 +857,418 @@ export const getSystemStatistics = async (req, res) => {
       message: "Lỗi server khi lấy thống kê hệ thống",
       error: error.message,
     });
+  }
+};
+
+// ============ BATCH TRACKING (DÀNH CHO ADMIN) ============
+
+// Danh sách lô hàng với thông tin tóm tắt
+export const getBatchList = async (req, res) => {
+  try {
+    const {
+      page = 1,
+      limit = 20,
+      batchNumber,
+      manufacturer,
+      status,
+      drugName,
+      fromDate,
+      toDate,
+    } = req.query;
+
+    let query = {};
+    if (batchNumber) {
+      query.batchNumber = { $regex: batchNumber, $options: 'i' };
+    }
+    if (manufacturer) {
+      query.manufacturer = manufacturer;
+    }
+    if (fromDate || toDate) {
+      query.mfgDate = {};
+      if (fromDate) query.mfgDate.$gte = new Date(fromDate);
+      if (toDate) query.mfgDate.$lte = new Date(toDate);
+    }
+
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+
+    const batches = await ProofOfProduction.find(query)
+      .populate('manufacturer', 'name licenseNo address')
+      .populate('drug', 'drugName registrationNo')
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(parseInt(limit))
+      .lean();
+
+    const total = await ProofOfProduction.countDocuments(query);
+
+    const enrichedBatches = await Promise.all(
+      batches.map(async (batch) => {
+        const batchNfts = await NFTInfo.find({ batchNumber: batch.batchNumber })
+          .select('_id status')
+          .lean();
+        const nftIds = batchNfts.map((n) => n._id);
+
+        const nftCount = batchNfts.length;
+        const distributedCount = batchNfts.filter((n) => ['transferred', 'sold'].includes(n.status)).length;
+
+        const completedInvoices = await CommercialInvoice.countDocuments({
+          nftInfo: { $in: nftIds },
+          supplyChainCompleted: true,
+        });
+
+        let batchStatus = 'produced';
+        if (completedInvoices > 0) batchStatus = 'completed';
+        else if (distributedCount > 0) batchStatus = 'in_transit';
+
+        return {
+          batchNumber: batch.batchNumber,
+          drug: batch.drug,
+          manufacturer: batch.manufacturer,
+          mfgDate: batch.mfgDate,
+          expDate: batch.expDate,
+          totalQuantity: batch.quantity,
+          nftCount,
+          distributedCount,
+          completedCount: completedInvoices,
+          status: batchStatus,
+          chainTxHash: batch.chainTxHash,
+          createdAt: batch.createdAt,
+        };
+      })
+    );
+
+    let filteredBatches = enrichedBatches;
+    if (status) {
+      filteredBatches = enrichedBatches.filter((b) => b.status === status);
+    }
+    if (drugName && filteredBatches.length > 0) {
+      filteredBatches = filteredBatches.filter(
+        (b) => b.drug && b.drug.drugName && b.drug.drugName.toLowerCase().includes(drugName.toLowerCase())
+      );
+    }
+
+    return res.json({
+      success: true,
+      data: filteredBatches,
+      pagination: {
+        page: parseInt(page),
+        limit: parseInt(limit),
+        total,
+        totalPages: Math.ceil(total / parseInt(limit)),
+      },
+    });
+  } catch (error) {
+    console.error('Error getting batch list:', error);
+    return res.status(500).json({ success: false, message: 'Failed to get batch list', error: error.message });
+  }
+};
+
+// Hành trình đầy đủ của một lô (production -> distributor -> pharmacy)
+export const getBatchJourney = async (req, res) => {
+  try {
+    const { batchNumber } = req.params;
+    if (!batchNumber) {
+      return res.status(400).json({ success: false, message: 'Batch number is required' });
+    }
+
+    const production = await ProofOfProduction.findOne({ batchNumber })
+      .populate('manufacturer', 'name licenseNo taxCode address country walletAddress')
+      .populate('drug', 'drugName registrationNo activeIngredient dosageForm strength')
+      .lean();
+
+    if (!production) {
+      return res.status(404).json({ success: false, message: 'Batch not found' });
+    }
+
+    const nfts = await NFTInfo.find({ batchNumber }).populate('owner', 'username email role').lean();
+    const nftIds = nfts.map((n) => n._id);
+
+    const manufacturerInvoices = await ManufacturerInvoice.find({
+      $or: [{ proofOfProduction: production._id }, { nftInfo: { $in: nftIds } }],
+    })
+      .populate('fromManufacturer', 'username email')
+      .populate('toDistributor', 'username email')
+      .populate('nftInfo', 'tokenId serialNumber status')
+      .lean();
+
+    const distributionProofs = await ProofOfDistribution.find({
+      $or: [
+        { proofOfProduction: production._id },
+        { manufacturerInvoice: { $in: manufacturerInvoices.map((i) => i._id) } },
+        { nftInfo: { $in: nftIds } },
+      ],
+    })
+      .populate('fromManufacturer', 'username email')
+      .populate('toDistributor', 'username email')
+      .populate('nftInfo', 'tokenId serialNumber status')
+      .populate('manufacturerInvoice', 'invoiceNumber status')
+      .lean();
+
+    const commercialInvoices = await CommercialInvoice.find({ nftInfo: { $in: nftIds } })
+      .populate('fromDistributor', 'username email')
+      .populate('toPharmacy', 'username email')
+      .populate('nftInfo', 'tokenId serialNumber status')
+      .populate('proofOfPharmacy')
+      .lean();
+
+    const pharmacyProofs = await ProofOfPharmacy.find({
+      $or: [
+        { proofOfDistribution: { $in: distributionProofs.map((d) => d._id) } },
+        { commercialInvoice: { $in: commercialInvoices.map((c) => c._id) } },
+        { nftInfo: { $in: nftIds } },
+      ],
+    })
+      .populate('fromDistributor', 'username email')
+      .populate('toPharmacy', 'username email')
+      .populate('nftInfo', 'tokenId serialNumber status')
+      .populate('commercialInvoice', 'invoiceNumber status')
+      .lean();
+
+    const manufacturerDetails = await PharmaCompany.findOne({ user: production.manufacturer._id }).lean();
+
+    const distributorUserIds = [
+      ...new Set([
+        ...manufacturerInvoices.map((inv) => inv.toDistributor?._id?.toString()),
+        ...distributionProofs.map((dp) => dp.toDistributor?._id?.toString()),
+      ].filter(Boolean)),
+    ];
+    const distributorDetails = await Distributor.find({ user: { $in: distributorUserIds } })
+      .populate('user', 'username email')
+      .lean();
+
+    const pharmacyUserIds = [
+      ...new Set([
+        ...commercialInvoices.map((inv) => inv.toPharmacy?._id?.toString()),
+        ...pharmacyProofs.map((pp) => pp.toPharmacy?._id?.toString()),
+      ].filter(Boolean)),
+    ];
+    const pharmacyDetails = await Pharmacy.find({ user: { $in: pharmacyUserIds } })
+      .populate('user', 'username email')
+      .lean();
+
+    const timeline = [];
+    timeline.push({
+      step: 1,
+      stage: 'production',
+      timestamp: production.createdAt,
+      entity: {
+        type: 'pharma_company',
+        name: production.manufacturer.name,
+        licenseNo: manufacturerDetails?.licenseNo,
+        address: manufacturerDetails?.address,
+        walletAddress: production.manufacturer.walletAddress,
+      },
+      details: {
+        batchNumber: production.batchNumber,
+        drug: production.drug,
+        quantity: production.quantity,
+        mfgDate: production.mfgDate,
+        expDate: production.expDate,
+        qaInspector: production.qaInspector,
+        qaReportUri: production.qaReportUri,
+        chainTxHash: production.chainTxHash,
+      },
+      nftsMinted: nfts.length,
+      status: 'completed',
+    });
+
+    manufacturerInvoices.forEach((invoice, index) => {
+      const distributorDetail = distributorDetails.find(
+        (d) => d.user._id.toString() === invoice.toDistributor?._id?.toString()
+      );
+      const proof = distributionProofs.find(
+        (dp) => dp.manufacturerInvoice?._id?.toString() === invoice._id.toString()
+      );
+
+      timeline.push({
+        step: 2 + index * 2,
+        stage: 'transfer_to_distributor',
+        timestamp: invoice.createdAt,
+        entity: {
+          type: 'distributor',
+          name: distributorDetail?.name,
+          licenseNo: distributorDetail?.licenseNo,
+          address: distributorDetail?.address,
+          walletAddress: invoice.toDistributor?.walletAddress,
+        },
+        details: {
+          invoiceNumber: invoice.invoiceNumber,
+          invoiceDate: invoice.invoiceDate,
+          quantity: invoice.quantity,
+          nfts: invoice.nftInfo,
+          deliveryAddress: invoice.deliveryInfo?.address,
+          shippingMethod: invoice.deliveryInfo?.shippingMethod,
+          estimatedDelivery: invoice.deliveryInfo?.estimatedDelivery,
+          chainTxHash: invoice.chainTxHash,
+          status: invoice.status,
+        },
+        proof: proof
+          ? {
+              receivedAt: proof.verifiedAt,
+              receivedBy: proof.receivedBy,
+              verificationCode: proof.verificationCode,
+              deliveryAddress: proof.deliveryAddress,
+              status: proof.status,
+              transferTxHash: proof.transferTxHash,
+            }
+          : null,
+      });
+    });
+
+    commercialInvoices.forEach((invoice, index) => {
+      const pharmacyDetail = pharmacyDetails.find(
+        (p) => p.user._id.toString() === invoice.toPharmacy?._id?.toString()
+      );
+      const proof = pharmacyProofs.find(
+        (pp) => pp.commercialInvoice?._id?.toString() === invoice._id.toString()
+      );
+
+      timeline.push({
+        step: 2 + manufacturerInvoices.length * 2 + index * 2,
+        stage: 'transfer_to_pharmacy',
+        timestamp: invoice.createdAt,
+        entity: {
+          type: 'pharmacy',
+          name: pharmacyDetail?.name,
+          licenseNo: pharmacyDetail?.licenseNo,
+          address: pharmacyDetail?.address,
+          walletAddress: invoice.toPharmacy?.walletAddress,
+        },
+        details: {
+          invoiceNumber: invoice.invoiceNumber,
+          quantity: invoice.quantity,
+          nfts: invoice.nftInfo,
+          deliveryAddress: invoice.deliveryInfo?.address,
+          shippingMethod: invoice.deliveryInfo?.shippingMethod,
+          estimatedDelivery: invoice.deliveryInfo?.estimatedDelivery,
+          chainTxHash: invoice.chainTxHash,
+          supplyChainCompleted: invoice.supplyChainCompleted,
+          status: invoice.status,
+        },
+        proof: proof
+          ? {
+              receivedAt: proof.completedAt,
+              receivedBy: proof.receivedBy,
+              receiptAddress: proof.receiptAddress,
+              qualityCheck: proof.qualityCheck,
+              status: proof.status,
+              receiptTxHash: proof.receiptTxHash,
+              supplyChainCompleted: proof.supplyChainCompleted,
+            }
+          : null,
+      });
+    });
+
+    timeline.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+    const statistics = {
+      totalNFTs: nfts.length,
+      nftsByStatus: {
+        minted: nfts.filter((n) => n.status === 'minted').length,
+        transferred: nfts.filter((n) => n.status === 'transferred').length,
+        sold: nfts.filter((n) => n.status === 'sold').length,
+        expired: nfts.filter((n) => n.status === 'expired').length,
+        recalled: nfts.filter((n) => n.status === 'recalled').length,
+      },
+      distributorsInvolved: distributorDetails.length,
+      pharmaciesInvolved: pharmacyDetails.length,
+      transfersToDistributors: manufacturerInvoices.length,
+      transfersToPharmacies: commercialInvoices.length,
+      completedSupplyChains: commercialInvoices.filter((inv) => inv.supplyChainCompleted).length,
+    };
+
+    const journey = {
+      batchInfo: {
+        batchNumber: production.batchNumber,
+        drug: production.drug,
+        manufacturer: { ...production.manufacturer, ...manufacturerDetails },
+        mfgDate: production.mfgDate,
+        expDate: production.expDate,
+        quantity: production.quantity,
+        chainTxHash: production.chainTxHash,
+        createdAt: production.createdAt,
+      },
+      timeline,
+      nfts: nfts.map((nft) => ({
+        tokenId: nft.tokenId,
+        serialNumber: nft.serialNumber,
+        status: nft.status,
+        currentOwner: nft.owner,
+      })),
+      statistics,
+      entities: {
+        manufacturer: manufacturerDetails,
+        distributors: distributorDetails,
+        pharmacies: pharmacyDetails,
+      },
+    };
+
+    return res.json({ success: true, data: journey });
+  } catch (error) {
+    console.error('Error getting batch journey:', error);
+    return res.status(500).json({ success: false, message: 'Failed to get batch journey', error: error.message });
+  }
+};
+
+// Hành trình theo NFT (đơn giản) – phục vụ kiểm tra nhanh
+export const getNFTJourney = async (req, res) => {
+  try {
+    const { tokenId } = req.params;
+    if (!tokenId) {
+      return res.status(400).json({ success: false, message: 'Token ID is required' });
+    }
+
+    const nft = await NFTInfo.findOne({ tokenId }).populate('owner', 'username email role').populate('proofOfProduction').lean();
+    if (!nft) {
+      return res.status(404).json({ success: false, message: 'NFT not found' });
+    }
+
+    const production = await ProofOfProduction.findById(nft.proofOfProduction)
+      .populate('manufacturer', 'name licenseNo taxCode address country walletAddress')
+      .populate('drug', 'drugName registrationNo activeIngredient dosageForm strength')
+      .lean();
+
+    const timeline = [];
+    timeline.push({
+      step: 1,
+      stage: 'production',
+      timestamp: production.createdAt,
+      entity: { type: 'pharma_company', name: production.manufacturer.name, address: production.manufacturer.address },
+      details: { batchNumber: production.batchNumber, tokenId: nft.tokenId, serialNumber: nft.serialNumber, mfgDate: production.mfgDate, expDate: production.expDate },
+    });
+
+    const manufacturerInvoices = await ManufacturerInvoice.find({ nftInfo: nft._id }).populate('toDistributor', 'username email').lean();
+    for (const invoice of manufacturerInvoices) {
+      const distributorDetail = await Distributor.findOne({ user: invoice.toDistributor?._id }).lean();
+      const proof = await ProofOfDistribution.findOne({ manufacturerInvoice: invoice._id, nftInfo: nft._id }).lean();
+      timeline.push({
+        step: timeline.length + 1,
+        stage: 'transfer_to_distributor',
+        timestamp: invoice.createdAt,
+        entity: { type: 'distributor', name: distributorDetail?.name, address: distributorDetail?.address },
+        details: { invoiceNumber: invoice.invoiceNumber, status: invoice.status, deliveryAddress: invoice.deliveryInfo?.address },
+        proof: proof ? { receivedAt: proof.verifiedAt, receivedBy: proof.receivedBy, status: proof.status } : null,
+      });
+    }
+
+    const commercialInvoices = await CommercialInvoice.find({ nftInfo: nft._id }).populate('toPharmacy', 'username email').lean();
+    for (const invoice of commercialInvoices) {
+      const pharmacyDetail = await Pharmacy.findOne({ user: invoice.toPharmacy?._id }).lean();
+      const proof = await ProofOfPharmacy.findOne({ commercialInvoice: invoice._id, nftInfo: nft._id }).lean();
+      timeline.push({
+        step: timeline.length + 1,
+        stage: 'transfer_to_pharmacy',
+        timestamp: invoice.createdAt,
+        entity: { type: 'pharmacy', name: pharmacyDetail?.name, address: pharmacyDetail?.address },
+        details: { invoiceNumber: invoice.invoiceNumber, status: invoice.status, supplyChainCompleted: invoice.supplyChainCompleted },
+        proof: proof ? { receivedAt: proof.completedAt, receivedBy: proof.receivedBy, status: proof.status, supplyChainCompleted: proof.supplyChainCompleted } : null,
+      });
+    }
+
+    return res.json({ success: true, data: { nftInfo: nft, batchInfo: { batchNumber: production.batchNumber, drug: production.drug, manufacturer: production.manufacturer, mfgDate: production.mfgDate, expDate: production.expDate }, timeline } });
+  } catch (error) {
+    console.error('Error getting NFT journey:', error);
+    return res.status(500).json({ success: false, message: 'Failed to get NFT journey', error: error.message });
   }
 };
 

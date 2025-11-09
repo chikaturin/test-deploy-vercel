@@ -3,10 +3,14 @@ import {
   getRegistrationStatistics,
   retryBlockchainRegistration,
   getAllDrugs,
+  getDrugDetails,
   getDrugStatistics,
   getSupplyChainHistory,
   getDistributionHistory,
   getSystemStatistics,
+  getBatchList,
+  getBatchJourney,
+  getNFTJourney,
 } from "../controllers/adminController.js";
 import { authenticate, isAdmin } from "../middleware/authMiddleware.js";
 
@@ -23,11 +27,17 @@ router.post("/registration/:requestId/retry-blockchain", retryBlockchainRegistra
 // ============ QUẢN LÝ THUỐC ============
 router.get("/drugs", getAllDrugs);
 router.get("/drugs/statistics", getDrugStatistics);
+router.get("/drugs/:drugId", getDrugDetails);
 
 // ============ GIÁM SÁT HỆ THỐNG ============
 router.get("/supply-chain/history", getSupplyChainHistory);
 router.get("/distribution/history", getDistributionHistory);
 router.get("/statistics", getSystemStatistics);
+
+// ============ BATCH TRACKING ============
+router.get("/batch-tracking/batches", getBatchList);
+router.get("/batch-tracking/batches/:batchNumber/journey", getBatchJourney);
+router.get("/batch-tracking/nft/:tokenId/journey", getNFTJourney);
 
 export default router;
 
