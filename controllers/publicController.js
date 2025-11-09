@@ -11,6 +11,7 @@ import ProofOfDistribution from "../models/ProofOfDistribution.js";
 import ProofOfPharmacy from "../models/ProofOfPharmacy.js";
 import bcrypt from "bcryptjs";
 import { getTrackingHistory } from "../services/blockchainService.js";
+import { handleError, handleValidationError } from "../utils/errorHandler.js";
 
 export const trackDrugByNFTId = async (req, res) => {
   try {
@@ -23,7 +24,6 @@ export const trackDrugByNFTId = async (req, res) => {
       });
     }
 
-    // Tìm NFT trong database
     const nft = await NFTInfo.findOne({ tokenId })
       .populate("drug", "tradeName atcCode genericName dosageForm strength packaging")
       .populate("owner", "username email fullName walletAddress")
@@ -180,22 +180,16 @@ export const trackDrugByNFTId = async (req, res) => {
 
   } catch (error) {
     console.error("Lỗi khi theo dõi hành trình:", error);
-
     const errorMessage = {
       success: false,
-      message: "Lỗi server khi theo dõi hành trình",
+      message: error.message || "Lỗi server khi theo dõi hành trình",
       error: error.message,
-    }
-
+    };
     const base64Urlstring = Buffer.from(JSON.stringify(errorMessage)).toString('base64url');
-
     const url = `http://localhost:5173/verify?data=${base64Urlstring}`;
-
     return res.redirect(302, url);
   }
 };
-
-// Hàm này là để tracking thông tin thuốc bằng mã NFT , Mã lô , Số Serial
 
 export const trackingDrugsInfo = async (req, res) => {
   try {
@@ -368,17 +362,10 @@ export const trackingDrugsInfo = async (req, res) => {
     });
 
   } catch (error) {
-    console.error("Lỗi khi theo dõi hành trình:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi theo dõi hành trình",
-      error: error.message,
-    });
+    return handleError(error, "Lỗi khi theo dõi hành trình:", res, "Lỗi server khi theo dõi hành trình");
   }
 };
 
-
-// Tìm kiếm thuốc theo ATC code
 export const searchDrugByATCCode = async (req, res) => {
   try {
     const { atcCode } = req.query;
@@ -412,11 +399,6 @@ export const searchDrugByATCCode = async (req, res) => {
       data: drug,
     });
   } catch (error) {
-    console.error("Lỗi khi tìm kiếm thuốc:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi tìm kiếm thuốc",
-      error: error.message,
-    });
+    return handleValidationError(error, "Lỗi khi tìm kiếm thuốc:", res);
   }
 };

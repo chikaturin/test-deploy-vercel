@@ -17,6 +17,10 @@ import {
   sendPasswordResetApprovedEmail,
   sendNewPasswordEmail,
 } from "../services/emailService.js";
+import { handleError, handleAuthError, handleValidationError } from "../utils/errorHandler.js";
+import BusinessEntityFactory from "../services/factories/BusinessEntityFactory.js";
+import { ValidationService } from "../services/utils/index.js";
+import { sendValidationError } from "../utils/validationResponse.js";
 
 export const login = async (req, res) => {
   try {
@@ -61,15 +65,7 @@ export const login = async (req, res) => {
       });
     }
 
-    let businessProfile = null;
-
-    if (user.role === "pharma_company" && user.pharmaCompany) {
-      businessProfile = await PharmaCompany.findById(user.pharmaCompany);
-    } else if (user.role === "distributor" && user.distributor) {
-      businessProfile = await Distributor.findById(user.distributor);
-    } else if (user.role === "pharmacy" && user.pharmacy) {
-      businessProfile = await Pharmacy.findById(user.pharmacy);
-    }
+    const businessProfile = await BusinessEntityFactory.getBusinessEntity(user);
 
     const token = generateToken({
       id: user._id.toString(),
@@ -80,29 +76,22 @@ export const login = async (req, res) => {
     const userResponse = user.toObject();
     delete userResponse.password;
 
+    const formattedProfile = BusinessEntityFactory.formatBusinessProfile(businessProfile);
+    if (formattedProfile && user.walletAddress) {
+      formattedProfile.walletAddress = user.walletAddress;
+    }
+
     return res.status(200).json({
       success: true,
       message: "Đăng nhập thành công",
       data: {
         user: userResponse,
-        businessProfile: businessProfile ? {
-          id: businessProfile._id,
-          name: businessProfile.name,
-          licenseNo: businessProfile.licenseNo,
-          taxCode: businessProfile.taxCode,
-          status: businessProfile.status,
-          walletAddress : user.walletAddress
-        } : null,
+        businessProfile: formattedProfile,
         token,
       },
     });
   } catch (error) {
-    console.error("Lỗi khi đăng nhập:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi đăng nhập",
-      error: error.message,
-    });
+    return handleAuthError(error, "Lỗi khi đăng nhập:", res);
   }
 };
 
@@ -110,38 +99,18 @@ export const getCurrentUser = async (req, res) => {
   try {
     const user = req.user;
 
-    let businessProfile = null;
-
-    if (user.role === "pharma_company" && user.pharmaCompany) {
-      businessProfile = await PharmaCompany.findById(user.pharmaCompany);
-    } else if (user.role === "distributor" && user.distributor) {
-      businessProfile = await Distributor.findById(user.distributor);
-    } else if (user.role === "pharmacy" && user.pharmacy) {
-      businessProfile = await Pharmacy.findById(user.pharmacy);
-    }
-
+    const businessProfile = await BusinessEntityFactory.getBusinessEntity(user);
     const userResponse = user.toObject();
 
     return res.status(200).json({
       success: true,
       data: {
         user: userResponse,
-        businessProfile: businessProfile ? {
-          id: businessProfile._id,
-          name: businessProfile.name,
-          licenseNo: businessProfile.licenseNo,
-          taxCode: businessProfile.taxCode,
-          status: businessProfile.status,
-        } : null,
+        businessProfile: BusinessEntityFactory.formatBusinessProfile(businessProfile),
       },
     });
   } catch (error) {
-    console.error("Lỗi khi lấy thông tin người dùng:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi lấy thông tin người dùng",
-      error: error.message,
-    });
+    return handleError(error, "Lỗi khi lấy thông tin người dùng:", res, "Lỗi server khi lấy thông tin người dùng");
   }
 };
 
@@ -152,12 +121,7 @@ export const logout = async (req, res) => {
       message: "Đăng xuất thành công",
     });
   } catch (error) {
-    console.error("Lỗi khi đăng xuất:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi đăng xuất",
-      error: error.message,
-    });
+    return handleError(error, "Lỗi khi đăng xuất:", res, "Lỗi server khi đăng xuất");
   }
 };
 
@@ -165,11 +129,18 @@ export const registerUser = async (req, res) => {
   try {
     const { username, email, password, fullName, phone, country, address } = req.body;
 
-    if (!username || !email || !password) {
-      return res.status(400).json({
-        success: false,
-        message: "Vui lòng cung cấp đầy đủ thông tin: username, email, password",
-      });
+    const requiredValidation = ValidationService.validateRequiredFields({
+      username,
+      email,
+      password,
+    });
+    if (!requiredValidation.valid) {
+      return sendValidationError(res, requiredValidation.message, requiredValidation.missingFields);
+    }
+
+    const emailValidation = ValidationService.validateEmail(email);
+    if (!emailValidation.valid) {
+      return sendValidationError(res, emailValidation.message);
     }
 
     const existingUser = await User.findOne({
@@ -208,12 +179,7 @@ export const registerUser = async (req, res) => {
       data: userResponse,
     });
   } catch (error) {
-    console.error("Lỗi khi đăng ký người dùng:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi đăng ký người dùng",
-      error: error.message,
-    });
+    return handleValidationError(error, "Lỗi khi đăng ký người dùng:", res);
   }
 };
 
@@ -262,12 +228,7 @@ export const registerAdmin = async (req, res) => {
       data: userResponse,
     });
   } catch (error) {
-    console.error("Lỗi khi đăng ký admin:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi đăng ký admin",
-      error: error.message,
-    });
+    return handleValidationError(error, "Lỗi khi đăng ký admin:", res);
   }
 };
 
@@ -372,12 +333,7 @@ export const registerPharmaCompany = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Lỗi khi đăng ký nhà sản xuất:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi đăng ký nhà sản xuất",
-      error: error.message,
-    });
+    return handleValidationError(error, "Lỗi khi đăng ký nhà sản xuất:", res);
   }
 };
 
@@ -480,12 +436,7 @@ export const registerDistributor = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Lỗi khi đăng ký nhà phân phối:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi đăng ký nhà phân phối",
-      error: error.message,
-    });
+    return handleValidationError(error, "Lỗi khi đăng ký nhà phân phối:", res);
   }
 };
 
@@ -588,12 +539,7 @@ export const registerPharmacy = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Lỗi khi đăng ký nhà thuốc:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi đăng ký nhà thuốc",
-      error: error.message,
-    });
+    return handleValidationError(error, "Lỗi khi đăng ký nhà thuốc:", res);
   }
 };
 
@@ -659,52 +605,14 @@ export const approveRegistration = async (req, res) => {
       registrationRequest.contractAddress = blockchainResult.receipt.to;
       registrationRequest.transactionHash = blockchainResult.transactionHash;
 
-      let businessProfile;
-      if (role === "pharma_company") {
-        businessProfile = new PharmaCompany({
-          user: user._id,
-          name: companyInfo.name || user.fullName || "",
-          licenseNo: companyInfo.licenseNo,
-          taxCode: companyInfo.taxCode,
-          gmpCertNo: companyInfo.gmpCertNo || "",
-          country: companyInfo.country || user.country || "",
-          address: companyInfo.address || user.address || "",
-          contactEmail: companyInfo.contactEmail || user.email || "",
-          contactPhone: companyInfo.contactPhone || user.phone || "",
-          walletAddress: user.walletAddress,
-          status: "active",
-        });
-      } else if (role === "distributor") {
-        businessProfile = new Distributor({
-          user: user._id,
-          name: companyInfo.name || user.fullName || "",
-          licenseNo: companyInfo.licenseNo,
-          taxCode: companyInfo.taxCode,
-          address: companyInfo.address || user.address || "",
-          country: companyInfo.country || user.country || "",
-          contactEmail: companyInfo.contactEmail || user.email || "",
-          contactPhone: companyInfo.contactPhone || user.phone || "",
-          walletAddress: user.walletAddress,
-          status: "active",
-        });
-      } else if (role === "pharmacy") {
-        businessProfile = new Pharmacy({
-          user: user._id,
-          name: companyInfo.name || user.fullName || "",
-          licenseNo: companyInfo.licenseNo,
-          taxCode: companyInfo.taxCode,
-          address: companyInfo.address || user.address || "",
-          country: companyInfo.country || user.country || "",
-          contactEmail: companyInfo.contactEmail || user.email || "",
-          contactPhone: companyInfo.contactPhone || user.phone || "",
-          walletAddress: user.walletAddress,
-          status: "active",
-        });
-      }
-
-      await businessProfile.save();
+      const businessProfile = await BusinessEntityFactory.createBusinessEntity(
+        user,
+        role,
+        companyInfo
+      );
 
       user.status = "active";
+      // Cập nhật reference đến business entity
       if (role === "pharma_company") {
         user.pharmaCompany = businessProfile._id;
       } else if (role === "distributor") {
@@ -747,12 +655,7 @@ export const approveRegistration = async (req, res) => {
       });
     }
   } catch (error) {
-    console.error("Lỗi khi phê duyệt đăng ký:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi phê duyệt đăng ký",
-      error: error.message,
-    });
+    return handleError(error, "Lỗi khi phê duyệt đăng ký:", res, "Lỗi server khi phê duyệt đăng ký");
   }
 };
 
@@ -801,12 +704,7 @@ export const rejectRegistration = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Lỗi khi từ chối đăng ký:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi từ chối đăng ký",
-      error: error.message,
-    });
+    return handleError(error, "Lỗi khi từ chối đăng ký:", res, "Lỗi server khi từ chối đăng ký");
   }
 };
 
@@ -832,12 +730,7 @@ export const getRegistrationRequests = async (req, res) => {
       data: requests,
     });
   } catch (error) {
-    console.error("Lỗi khi lấy danh sách yêu cầu:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi lấy danh sách yêu cầu",
-      error: error.message,
-    });
+    return handleError(error, "Lỗi khi lấy danh sách yêu cầu:", res, "Lỗi server khi lấy danh sách yêu cầu");
   }
 };
 
@@ -861,16 +754,10 @@ export const getRegistrationRequestById = async (req, res) => {
       data: request,
     });
   } catch (error) {
-    console.error("Lỗi khi lấy thông tin yêu cầu:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi lấy thông tin yêu cầu",
-      error: error.message,
-    });
+    return handleError(error, "Lỗi khi lấy thông tin yêu cầu:", res, "Lỗi server khi lấy thông tin yêu cầu");
   }
 };
 
-// Quên mật khẩu - tạo yêu cầu reset (cần admin xác nhận cho pharma_company, distributor, pharmacy)
 export const forgotPassword = async (req, res) => {
   try {
     const { email, licenseNo, taxCode } = req.body;
@@ -998,16 +885,9 @@ export const forgotPassword = async (req, res) => {
       });
     }
   } catch (error) {
-    console.error("Lỗi khi tạo yêu cầu reset mật khẩu:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi tạo yêu cầu reset mật khẩu",
-      error: error.message,
-    });
+    return handleError(error, "Lỗi khi tạo yêu cầu reset mật khẩu:", res, "Lỗi server khi tạo yêu cầu reset mật khẩu");
   }
 };
-
-// Admin xác nhận yêu cầu reset mật khẩu của pharma_company, distributor, pharmacy
 export const approvePasswordReset = async (req, res) => {
   try {
     const adminUser = req.user;
@@ -1147,16 +1027,10 @@ export const approvePasswordReset = async (req, res) => {
       message: "Yêu cầu reset mật khẩu đã được admin duyệt. Mật khẩu mới đã được gửi đến email của người dùng.",
     });
   } catch (error) {
-    console.error("Lỗi khi xác nhận yêu cầu reset mật khẩu:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi xác nhận yêu cầu reset mật khẩu",
-      error: error.message,
-    });
+    return handleError(error, "Lỗi khi xác nhận yêu cầu reset mật khẩu:", res, "Lỗi server khi xác nhận yêu cầu reset mật khẩu");
   }
 };
 
-// Reset mật khẩu
 export const resetPassword = async (req, res) => {
   try {
     const { token, newPassword } = req.body;
@@ -1214,16 +1088,10 @@ export const resetPassword = async (req, res) => {
       message: "Reset mật khẩu thành công",
     });
   } catch (error) {
-    console.error("Lỗi khi reset mật khẩu:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi reset mật khẩu",
-      error: error.message,
-    });
+    return handleAuthError(error, "Lỗi khi reset mật khẩu:", res);
   }
 };
 
-// Từ chối yêu cầu reset mật khẩu
 export const rejectPasswordReset = async (req, res) => {
   try {
     const adminUser = req.user;
@@ -1276,16 +1144,10 @@ export const rejectPasswordReset = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Lỗi khi từ chối yêu cầu reset mật khẩu:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi từ chối yêu cầu reset mật khẩu",
-      error: error.message,
-    });
+    return handleError(error, "Lỗi khi từ chối yêu cầu reset mật khẩu:", res, "Lỗi server khi từ chối yêu cầu reset mật khẩu");
   }
 };
 
-// Lấy danh sách yêu cầu reset mật khẩu (cho admin)
 export const getPasswordResetRequests = async (req, res) => {
   try {
     const adminUser = req.user;
@@ -1338,12 +1200,7 @@ export const getPasswordResetRequests = async (req, res) => {
       data: filteredRequests,
     });
   } catch (error) {
-    console.error("Lỗi khi lấy danh sách yêu cầu reset mật khẩu:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi lấy danh sách yêu cầu reset mật khẩu",
-      error: error.message,
-    });
+    return handleError(error, "Lỗi khi lấy danh sách yêu cầu reset mật khẩu:", res, "Lỗi server khi lấy danh sách yêu cầu reset mật khẩu");
   }
 };
 

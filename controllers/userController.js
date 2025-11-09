@@ -11,6 +11,7 @@ import ProofOfDistribution from "../models/ProofOfDistribution.js";
 import ProofOfPharmacy from "../models/ProofOfPharmacy.js";
 import bcrypt from "bcryptjs";
 import { getTrackingHistory } from "../services/blockchainService.js";
+import { handleError, handleAuthError, handleValidationError } from "../utils/errorHandler.js";
 
 export const getAllUsers = async (req, res) => {
   try {
@@ -59,12 +60,7 @@ export const getAllUsers = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Lỗi khi lấy danh sách người dùng:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi lấy danh sách người dùng",
-      error: error.message,
-    });
+    return handleError(error, "Lỗi khi lấy danh sách người dùng:", res, "Lỗi server khi lấy danh sách người dùng");
   }
 };
 
@@ -90,12 +86,7 @@ export const getUserById = async (req, res) => {
       data: user,
     });
   } catch (error) {
-    console.error("Lỗi khi lấy thông tin người dùng:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi lấy thông tin người dùng",
-      error: error.message,
-    });
+    return handleError(error, "Lỗi khi lấy thông tin người dùng:", res, "Lỗi server khi lấy thông tin người dùng");
   }
 };
 
@@ -121,12 +112,7 @@ export const getUserProfile = async (req, res) => {
       data: user,
     });
   } catch (error) {
-    console.error("Lỗi khi lấy thông tin profile:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi lấy thông tin profile",
-      error: error.message,
-    });
+    return handleError(error, "Lỗi khi lấy thông tin profile:", res, "Lỗi server khi lấy thông tin profile");
   }
 };
 
@@ -161,12 +147,7 @@ export const updateUserProfile = async (req, res) => {
       data: userResponse,
     });
   } catch (error) {
-    console.error("Lỗi khi cập nhật profile:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi cập nhật profile",
-      error: error.message,
-    });
+    return handleError(error, "Lỗi khi cập nhật profile:", res, "Lỗi server khi cập nhật profile");
   }
 };
 
@@ -202,12 +183,7 @@ export const updateUser = async (req, res) => {
       data: userResponse,
     });
   } catch (error) {
-    console.error("Lỗi khi cập nhật người dùng:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi cập nhật người dùng",
-      error: error.message,
-    });
+    return handleError(error, "Lỗi khi cập nhật người dùng:", res, "Lỗi server khi cập nhật người dùng");
   }
 };
 
@@ -257,12 +233,7 @@ export const changePassword = async (req, res) => {
       message: "Đổi mật khẩu thành công",
     });
   } catch (error) {
-    console.error("Lỗi khi đổi mật khẩu:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi đổi mật khẩu",
-      error: error.message,
-    });
+    return handleAuthError(error, "Lỗi khi đổi mật khẩu:", res);
   }
 };
 
@@ -301,12 +272,7 @@ export const deleteUser = async (req, res) => {
       message: "Xóa người dùng thành công",
     });
   } catch (error) {
-    console.error("Lỗi khi xóa người dùng:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi xóa người dùng",
-      error: error.message,
-    });
+    return handleError(error, "Lỗi khi xóa người dùng:", res, "Lỗi server khi xóa người dùng");
   }
 };
 
@@ -351,12 +317,7 @@ export const updateUserStatus = async (req, res) => {
       data: userResponse,
     });
   } catch (error) {
-    console.error("Lỗi khi cập nhật trạng thái:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi cập nhật trạng thái",
-      error: error.message,
-    });
+    return handleError(error, "Lỗi khi cập nhật trạng thái:", res, "Lỗi server khi cập nhật trạng thái");
   }
 };
 
@@ -384,19 +345,10 @@ export const getUserStats = async (req, res) => {
       data: stats,
     });
   } catch (error) {
-    console.error("Lỗi khi lấy thống kê người dùng:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi lấy thống kê người dùng",
-      error: error.message,
-    });
+    return handleError(error, "Lỗi khi lấy thống kê người dùng:", res, "Lỗi server khi lấy thống kê người dùng");
   }
 };
 
-// ============ TRA CỨU THÔNG TIN ============
-
-// Theo dõi hành trình thuốc qua NFT ID (NFT Tracking)
-// Cho phép user tra cứu hành trình của thuốc thông qua tokenId
 export const trackDrugByNFTId = async (req, res) => {
   try {
     const { tokenId } = req.params;
@@ -560,17 +512,10 @@ export const trackDrugByNFTId = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Lỗi khi theo dõi hành trình:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi theo dõi hành trình",
-      error: error.message,
-    });
+    return handleError(error, "Lỗi khi theo dõi hành trình:", res, "Lỗi server khi theo dõi hành trình");
   }
 };
 
-// Xem thông tin thuốc (có thể bị giới hạn, cần xác thực)
-// Cho phép user xem thông tin thuốc công khai, nhưng một số thông tin nhạy cảm có thể bị ẩn
 export const getDrugInfo = async (req, res) => {
   try {
     const { drugId, atcCode } = req.query;
@@ -645,17 +590,10 @@ export const getDrugInfo = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Lỗi khi lấy thông tin thuốc:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi lấy thông tin thuốc",
-      error: error.message,
-    });
+    return handleError(error, "Lỗi khi lấy thông tin thuốc:", res, "Lỗi server khi lấy thông tin thuốc");
   }
 };
 
-// Xem danh sách thuốc (có phân trang và tìm kiếm)
-// Cho phép user tìm kiếm thuốc với thông tin công khai
 export const searchDrugs = async (req, res) => {
   try {
     const user = req.user; // Cần xác thực
@@ -729,12 +667,7 @@ export const searchDrugs = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Lỗi khi tìm kiếm thuốc:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi tìm kiếm thuốc",
-      error: error.message,
-    });
+    return handleError(error, "Lỗi khi tìm kiếm thuốc:", res, "Lỗi server khi tìm kiếm thuốc");
   }
 };
 

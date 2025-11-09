@@ -15,10 +15,8 @@ import {
   addDistributorToBlockchain,
   addPharmacyToBlockchain,
 } from "../services/blockchainService.js";
+import { handleError } from "../utils/errorHandler.js";
 
-// ============ QUẢN LÝ ĐƠN ĐĂNG KÝ ============
-
-// Thống kê đơn đăng ký
 export const getRegistrationStatistics = async (req, res) => {
   try {
     const totalRequests = await RegistrationRequest.countDocuments();
@@ -54,16 +52,10 @@ export const getRegistrationStatistics = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Lỗi khi lấy thống kê đơn đăng ký:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi lấy thống kê đơn đăng ký",
-      error: error.message,
-    });
+    return handleError(error, "Lỗi khi lấy thống kê đơn đăng ký:", res, "Lỗi server khi lấy thống kê đơn đăng ký");
   }
 };
 
-// Retry blockchain cho đơn đăng ký bị lỗi
 export const retryBlockchainRegistration = async (req, res) => {
   try {
     const { requestId } = req.params;
@@ -210,18 +202,11 @@ export const retryBlockchainRegistration = async (req, res) => {
       });
     }
   } catch (error) {
-    console.error("Lỗi khi retry blockchain:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi retry blockchain",
-      error: error.message,
-    });
+    return handleError(error, "Lỗi khi retry blockchain:", res, "Lỗi server khi retry blockchain");
   }
 };
 
-// ============ QUẢN LÝ THUỐC ============
 
-// Xem tất cả thông tin thuốc (với phân trang và filter)
 export const getAllDrugs = async (req, res) => {
   try {
     const { page = 1, limit = 10, search, status, manufacturerId } = req.query;
@@ -269,16 +254,10 @@ export const getAllDrugs = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Lỗi khi lấy danh sách thuốc:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi lấy danh sách thuốc",
-      error: error.message,
-    });
+    return handleError(error, "Lỗi khi lấy danh sách thuốc:", res, "Lỗi server khi lấy danh sách thuốc");
   }
 };
 
-// Xem chi tiết thuốc (Admin)
 export const getDrugDetails = async (req, res) => {
   try {
     const { drugId } = req.params;
@@ -358,16 +337,10 @@ export const getDrugDetails = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Lỗi khi lấy chi tiết thuốc:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi lấy chi tiết thuốc",
-      error: error.message,
-    });
+    return handleError(error, "Lỗi khi lấy chi tiết thuốc:", res, "Lỗi server khi lấy chi tiết thuốc");
   }
 };
 
-// Thống kê thuốc
 export const getDrugStatistics = async (req, res) => {
   try {
     const totalDrugs = await DrugInfo.countDocuments();
@@ -447,18 +420,10 @@ export const getDrugStatistics = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Lỗi khi lấy thống kê thuốc:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi lấy thống kê thuốc",
-      error: error.message,
-    });
+    return handleError(error, "Lỗi khi lấy thống kê thuốc:", res, "Lỗi server khi lấy thống kê thuốc");
   }
 };
 
-// ============ GIÁM SÁT HỆ THỐNG ============
-
-// Xem lịch sử của toàn bộ luồng truy xuất từ sản xuất đến nhà thuốc
 export const getSupplyChainHistory = async (req, res) => {
   try {
     const { page = 1, limit = 20, drugId, tokenId, status, startDate, endDate } = req.query;
@@ -647,16 +612,11 @@ export const getSupplyChainHistory = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Lỗi khi lấy lịch sử supply chain:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi lấy lịch sử supply chain",
-      error: error.message,
-    });
+    return handleError(error, "Lỗi khi lấy lịch sử supply chain:", res, "Lỗi server khi lấy lịch sử supply chain");
   }
 };
 
-// Xem lịch sử phân phối thuốc
+
 export const getDistributionHistory = async (req, res) => {
   try {
     const { page = 1, limit = 20, distributorId, pharmacyId, drugId, status, startDate, endDate } = req.query;
@@ -772,16 +732,10 @@ export const getDistributionHistory = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Lỗi khi lấy lịch sử phân phối:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi lấy lịch sử phân phối",
-      error: error.message,
-    });
+    return handleError(error, "Lỗi khi lấy lịch sử phân phối:", res, "Lỗi server khi lấy lịch sử phân phối");
   }
 };
 
-// Thống kê tổng quan hệ thống
 export const getSystemStatistics = async (req, res) => {
   try {
     // Thống kê users
@@ -851,18 +805,10 @@ export const getSystemStatistics = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Lỗi khi lấy thống kê hệ thống:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi lấy thống kê hệ thống",
-      error: error.message,
-    });
+    return handleError(error, "Lỗi khi lấy thống kê hệ thống:", res, "Lỗi server khi lấy thống kê hệ thống");
   }
 };
 
-// ============ BATCH TRACKING (DÀNH CHO ADMIN) ============
-
-// Danh sách lô hàng với thông tin tóm tắt
 export const getBatchList = async (req, res) => {
   try {
     const {
@@ -958,12 +904,10 @@ export const getBatchList = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error('Error getting batch list:', error);
-    return res.status(500).json({ success: false, message: 'Failed to get batch list', error: error.message });
+    return handleError(error, "Error getting batch list:", res, "Failed to get batch list");
   }
 };
 
-// Hành trình đầy đủ của một lô (production -> distributor -> pharmacy)
 export const getBatchJourney = async (req, res) => {
   try {
     const { batchNumber } = req.params;
@@ -1205,12 +1149,10 @@ export const getBatchJourney = async (req, res) => {
 
     return res.json({ success: true, data: journey });
   } catch (error) {
-    console.error('Error getting batch journey:', error);
-    return res.status(500).json({ success: false, message: 'Failed to get batch journey', error: error.message });
+    return handleError(error, "Error getting batch journey:", res, "Failed to get batch journey");
   }
 };
 
-// Hành trình theo NFT (đơn giản) – phục vụ kiểm tra nhanh
 export const getNFTJourney = async (req, res) => {
   try {
     const { tokenId } = req.params;
@@ -1267,8 +1209,7 @@ export const getNFTJourney = async (req, res) => {
 
     return res.json({ success: true, data: { nftInfo: nft, batchInfo: { batchNumber: production.batchNumber, drug: production.drug, manufacturer: production.manufacturer, mfgDate: production.mfgDate, expDate: production.expDate }, timeline } });
   } catch (error) {
-    console.error('Error getting NFT journey:', error);
-    return res.status(500).json({ success: false, message: 'Failed to get NFT journey', error: error.message });
+    return handleError(error, "Error getting NFT journey:", res, "Failed to get NFT journey");
   }
 };
 

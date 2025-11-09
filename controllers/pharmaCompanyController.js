@@ -8,28 +8,20 @@ import User from "../models/User.js";
 import Distributor from "../models/Distributor.js";
 import { uploadFolderToIPFS } from "../services/ipfsService.js";
 import ManufactureIPFSStatusModel from "../models/manufactureIPFSStatus.js";
+import { handleError } from "../utils/errorHandler.js";
+import BusinessEntityFactory from "../services/factories/BusinessEntityFactory.js";
+import QueryBuilderFactory from "../services/factories/QueryBuilderFactory.js";
+import { DateHelper, DataAggregationService, StatisticsCalculationService, NFTService, ValidationService } from "../services/utils/index.js";
+import { sendValidationError } from "../utils/validationResponse.js";
 
-// ============ QUẢN LÝ THUỐC ============
-
-// Thêm thông tin thuốc
 export const addDrug = async (req, res) => {
   try {
     const user = req.user;
     
-    if (user.role !== "pharma_company") {
-      return res.status(403).json({
-        success: false,
-        message: "Chỉ có pharma company mới có thể thêm thuốc",
-      });
-    }
-
-    const pharmaCompany = await PharmaCompany.findOne({ user: user._id });
-    if (!pharmaCompany) {
-      return res.status(404).json({
-        success: false,
-        message: "Không tìm thấy thông tin pharma company",
-      });
-    }
+    const pharmaCompany = await BusinessEntityFactory.getBusinessEntityWithValidation(
+      user,
+      "pharma_company"
+    );
 
     const {
       tradeName,
@@ -44,11 +36,12 @@ export const addDrug = async (req, res) => {
       activeIngredients,
     } = req.body;
 
-    if (!tradeName || !atcCode) {
-      return res.status(400).json({
-        success: false,
-        message: "Trade name và ATC code là bắt buộc",
-      });
+    const requiredValidation = ValidationService.validateRequiredFields({
+      tradeName,
+      atcCode,
+    });
+    if (!requiredValidation.valid) {
+      return sendValidationError(res, requiredValidation.message, requiredValidation.missingFields);
     }
 
     // Kiểm tra ATC code đã tồn tại chưa
@@ -83,35 +76,19 @@ export const addDrug = async (req, res) => {
       data: drug,
     });
   } catch (error) {
-    console.error("Lỗi khi thêm thuốc:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi thêm thuốc",
-      error: error.message,
-    });
+    return handleError(error, "Lỗi khi thêm thuốc:", res, "Lỗi server khi thêm thuốc");
   }
 };
 
-// Cập nhật thông tin thuốc
 export const updateDrug = async (req, res) => {
   try {
     const user = req.user;
     const { drugId } = req.params;
 
-    if (user.role !== "pharma_company") {
-      return res.status(403).json({
-        success: false,
-        message: "Chỉ có pharma company mới có thể cập nhật thuốc",
-      });
-    }
-
-    const pharmaCompany = await PharmaCompany.findOne({ user: user._id });
-    if (!pharmaCompany) {
-      return res.status(404).json({
-        success: false,
-        message: "Không tìm thấy thông tin pharma company",
-      });
-    }
+    const pharmaCompany = await BusinessEntityFactory.getBusinessEntityWithValidation(
+      user,
+      "pharma_company"
+    );
 
     const drug = await DrugInfo.findById(drugId);
     if (!drug) {
@@ -163,35 +140,19 @@ export const updateDrug = async (req, res) => {
       data: drug,
     });
   } catch (error) {
-    console.error("Lỗi khi cập nhật thuốc:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi cập nhật thuốc",
-      error: error.message,
-    });
+    return handleError(error, "Lỗi khi cập nhật thuốc:", res, "Lỗi server khi cập nhật thuốc");
   }
 };
 
-// Xóa thuốc khỏi hệ thống
 export const deleteDrug = async (req, res) => {
   try {
     const user = req.user;
     const { drugId } = req.params;
 
-    if (user.role !== "pharma_company") {
-      return res.status(403).json({
-        success: false,
-        message: "Chỉ có pharma company mới có thể xóa thuốc",
-      });
-    }
-
-    const pharmaCompany = await PharmaCompany.findOne({ user: user._id });
-    if (!pharmaCompany) {
-      return res.status(404).json({
-        success: false,
-        message: "Không tìm thấy thông tin pharma company",
-      });
-    }
+    const pharmaCompany = await BusinessEntityFactory.getBusinessEntityWithValidation(
+      user,
+      "pharma_company"
+    );
 
     const drug = await DrugInfo.findById(drugId);
     if (!drug) {
@@ -225,20 +186,14 @@ export const deleteDrug = async (req, res) => {
       message: "Xóa thuốc thành công",
     });
   } catch (error) {
-    console.error("Lỗi khi xóa thuốc:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi xóa thuốc",
-      error: error.message,
-    });
+    return handleError(error, "Lỗi khi xóa thuốc:", res, "Lỗi server khi xóa thuốc");
   }
 };
 
-// Xem danh sách thuốc
 export const getDrugs = async (req, res) => {
   try {
     const user = req.user;
-    const { page = 1, limit = 10, atcCode, status, search } = req.query;
+    const { atcCode, status, search } = req.query;
 
     if (user.role !== "pharma_company") {
       return res.status(403).json({
@@ -247,13 +202,10 @@ export const getDrugs = async (req, res) => {
       });
     }
 
-    const pharmaCompany = await PharmaCompany.findOne({ user: user._id });
-    if (!pharmaCompany) {
-      return res.status(404).json({
-        success: false,
-        message: "Không tìm thấy thông tin pharma company",
-      });
-    }
+    const pharmaCompany = await BusinessEntityFactory.getBusinessEntityWithValidation(
+      user,
+      "pharma_company"
+    );
 
     const filter = { manufacturer: pharmaCompany._id };
     
@@ -273,9 +225,10 @@ export const getDrugs = async (req, res) => {
       ];
     }
 
-    const pageNum = parseInt(page);
-    const limitNum = parseInt(limit);
-    const skip = (pageNum - 1) * limitNum;
+    const pagination = QueryBuilderFactory.createPaginationOptions(req.query);
+    const limitNum = pagination.limit;
+    const pageNum = pagination.page;
+    const skip = pagination.skip;
 
     const drugs = await DrugInfo.find(filter)
       .sort({ createdAt: -1 })
@@ -297,16 +250,10 @@ export const getDrugs = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Lỗi khi lấy danh sách thuốc:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi lấy danh sách thuốc",
-      error: error.message,
-    });
+    return handleError(error, "Lỗi khi lấy danh sách thuốc:", res, "Lỗi server khi lấy danh sách thuốc");
   }
 };
 
-// Tìm kiếm thuốc theo ATC code
 export const searchDrugByATCCode = async (req, res) => {
   try {
     const user = req.user;
@@ -326,13 +273,10 @@ export const searchDrugByATCCode = async (req, res) => {
       });
     }
 
-    const pharmaCompany = await PharmaCompany.findOne({ user: user._id });
-    if (!pharmaCompany) {
-      return res.status(404).json({
-        success: false,
-        message: "Không tìm thấy thông tin pharma company",
-      });
-    }
+    const pharmaCompany = await BusinessEntityFactory.getBusinessEntityWithValidation(
+      user,
+      "pharma_company"
+    );
 
     const drug = await DrugInfo.findOne({
       manufacturer: pharmaCompany._id,
@@ -351,35 +295,19 @@ export const searchDrugByATCCode = async (req, res) => {
       data: drug,
     });
   } catch (error) {
-    console.error("Lỗi khi tìm kiếm thuốc:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi tìm kiếm thuốc",
-      error: error.message,
-    });
+    return handleError(error, "Lỗi khi tìm kiếm thuốc:", res, "Lỗi server khi tìm kiếm thuốc");
   }
 };
 
-// Xem thông tin chi tiết một thuốc
 export const getDrugById = async (req, res) => {
   try {
     const user = req.user;
     const { drugId } = req.params;
 
-    if (user.role !== "pharma_company") {
-      return res.status(403).json({
-        success: false,
-        message: "Chỉ có pharma company mới có thể xem thông tin thuốc",
-      });
-    }
-
-    const pharmaCompany = await PharmaCompany.findOne({ user: user._id });
-    if (!pharmaCompany) {
-      return res.status(404).json({
-        success: false,
-        message: "Không tìm thấy thông tin pharma company",
-      });
-    }
+    const pharmaCompany = await BusinessEntityFactory.getBusinessEntityWithValidation(
+      user,
+      "pharma_company"
+    );
 
     const drug = await DrugInfo.findById(drugId);
     if (!drug) {
@@ -402,19 +330,10 @@ export const getDrugById = async (req, res) => {
       data: drug,
     });
   } catch (error) {
-    console.error("Lỗi khi lấy thông tin thuốc:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi lấy thông tin thuốc",
-      error: error.message,
-    });
+    return handleError(error, "Lỗi khi lấy thông tin thuốc:", res, "Lỗi server khi lấy thông tin thuốc");
   }
 };
 
-// ============ QUẢN LÝ SẢN XUẤT VÀ PHÂN PHỐI ============
-
-// Bước 1: Upload folder lên IPFS (Pinata)
-// Frontend gọi API này trước khi mint NFT
 export const uploadDrugPackageToIPFS = async (req, res) => {
   try {
     const user = req.user;
@@ -428,14 +347,10 @@ export const uploadDrugPackageToIPFS = async (req, res) => {
 
     const { quantity, metadata } = req.body;
 
-    const manufacturer = await PharmaCompany.findOne({ user: user._id });
-
-    if(!manufacturer) {
-      return res.status(400).json({
-        success: false,
-        message: "Không tìm thấy nhà sản xuất"
-      });
-    }
+    const manufacturer = await BusinessEntityFactory.getBusinessEntityWithValidation(
+      user,
+      "pharma_company"
+    );
 
     if (!quantity || quantity <= 0) {
       return res.status(400).json({
@@ -469,36 +384,18 @@ export const uploadDrugPackageToIPFS = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Lỗi khi upload IPFS:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi upload IPFS",
-      error: error.message,
-    });
+    return handleError(error, "Lỗi khi upload IPFS:", res, "Lỗi server khi upload IPFS");
   }
 };
 
-// Bước 2: Lưu NFT vào DB sau khi mint thành công trên smart contract
-// Frontend sẽ gọi smart contract trực tiếp để mint NFT, sau đó gọi API này để lưu vào DB
-// Backend cũng có thể lắng nghe event mintNFTEvent từ blockchain và tự động lưu
 export const saveMintedNFTs = async (req, res) => {
   try {
     const user = req.user;
     
-    if (user.role !== "pharma_company") {
-      return res.status(403).json({
-        success: false,
-        message: "Chỉ có pharma company mới có thể lưu NFT",
-      });
-    }
-
-    const pharmaCompany = await PharmaCompany.findOne({ user: user._id });
-    if (!pharmaCompany) {
-      return res.status(404).json({
-        success: false,
-        message: "Không tìm thấy thông tin pharma company",
-      });
-    }
+    const pharmaCompany = await BusinessEntityFactory.getBusinessEntityWithValidation(
+      user,
+      "pharma_company"
+    );
 
     const {
       drugId,
@@ -516,25 +413,30 @@ export const saveMintedNFTs = async (req, res) => {
 
     
 
-    if (!drugId || !tokenIds || !transactionHash || !quantity || !ipfsUrl) {
-      return res.status(400).json({
-        success: false,
-        message: "drugId, tokenIds, transactionHash, quantity và ipfsUrl là bắt buộc",
-      });
+    const requiredValidation = ValidationService.validateRequiredFields({
+      drugId,
+      tokenIds,
+      transactionHash,
+      quantity,
+      ipfsUrl,
+    });
+    if (!requiredValidation.valid) {
+      return sendValidationError(res, requiredValidation.message, requiredValidation.missingFields);
     }
 
-    if (!Array.isArray(tokenIds) || tokenIds.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: "tokenIds phải là một array không rỗng",
-      });
+    const arrayValidation = ValidationService.validateArray(tokenIds, "tokenIds");
+    if (!arrayValidation.valid) {
+      return sendValidationError(res, arrayValidation.message);
     }
 
-    if (tokenIds.length !== quantity) {
-      return res.status(400).json({
-        success: false,
-        message: "Số lượng tokenIds phải bằng quantity",
-      });
+    const quantityValidation = ValidationService.validatePositiveNumber(quantity, "quantity");
+    if (!quantityValidation.valid) {
+      return sendValidationError(res, quantityValidation.message);
+    }
+
+    const lengthValidation = ValidationService.validateArrayLength(tokenIds, new Array(quantity).fill(0), "tokenIds", "quantity");
+    if (!lengthValidation.valid) {
+      return sendValidationError(res, lengthValidation.message);
     }
 
     const drug = await DrugInfo.findById(drugId);
@@ -640,41 +542,23 @@ export const saveMintedNFTs = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Lỗi khi lưu NFT:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi lưu NFT",
-      error: error.message,
-    });
+    return handleError(error, "Lỗi khi lưu NFT:", res, "Lỗi server khi lưu NFT");
   }
 };
 
-// Chuyển giao đơn thuốc cho Distributor
 export const transferToDistributor = async (req, res) => {
   try {
     const user = req.user;
     console.log("[transferToDistributor] request by=", user?._id?.toString());
 
-    if (user.role !== "pharma_company") {
-      return res.status(403).json({
-        success: false,
-        message: "Chỉ có pharma company mới có thể chuyển giao đơn thuốc",
-      });
-    }
+    const pharmaCompany = await BusinessEntityFactory.getBusinessEntityWithValidation(
+      user,
+      "pharma_company"
+    );
 
-    const pharmaCompany = await PharmaCompany.findOne({ user: user._id });
-    if (!pharmaCompany) {
-      return res.status(404).json({
-        success: false,
-        message: "Không tìm thấy thông tin pharma company",
-      });
-    }
-
-    if (!user.walletAddress) {
-      return res.status(400).json({
-        success: false,
-        message: "User chưa có wallet address",
-      });
+    const walletValidation = ValidationService.validateWalletAddress(user.walletAddress);
+    if (!walletValidation.valid) {
+      return sendValidationError(res, "User chưa có wallet address");
     }
 
     const {
@@ -700,18 +584,28 @@ export const transferToDistributor = async (req, res) => {
       quantity,
     });
 
-    if (!distributorId || !tokenIds || !amounts) {
-      return res.status(400).json({
-        success: false,
-        message: "distributorId, tokenIds và amounts là bắt buộc",
-      });
+    const requiredValidation = ValidationService.validateRequiredFields({
+      distributorId,
+      tokenIds,
+      amounts,
+    });
+    if (!requiredValidation.valid) {
+      return sendValidationError(res, requiredValidation.message, requiredValidation.missingFields);
     }
 
-    if (tokenIds.length !== amounts.length) {
-      return res.status(400).json({
-        success: false,
-        message: "Số lượng tokenIds phải bằng số lượng amounts",
-      });
+    const arrayValidation = ValidationService.validateArray(tokenIds, "tokenIds");
+    if (!arrayValidation.valid) {
+      return sendValidationError(res, arrayValidation.message);
+    }
+
+    const amountsValidation = ValidationService.validateArray(amounts, "amounts");
+    if (!amountsValidation.valid) {
+      return sendValidationError(res, amountsValidation.message);
+    }
+
+    const lengthValidation = ValidationService.validateArrayLength(tokenIds, amounts, "tokenIds", "amounts");
+    if (!lengthValidation.valid) {
+      return sendValidationError(res, lengthValidation.message);
     }
 
     // Tìm distributor
@@ -731,23 +625,22 @@ export const transferToDistributor = async (req, res) => {
     }
 
     // Kiểm tra quyền sở hữu NFT
-    const nftInfos = await NFTInfo.find({
-      tokenId: { $in: tokenIds },
-      owner: user._id,
-      status: "minted",
-    });
+    const nftValidation = await NFTService.validateNFTOwnership(tokenIds, user, "minted");
 
     console.log("[transferToDistributor] nft ownership check:", {
-      requestedTokenIds: tokenIds.length,
-      ownedMintedCount: nftInfos.length,
+      requestedTokenIds: nftValidation.requestedCount,
+      ownedMintedCount: nftValidation.foundCount,
+      valid: nftValidation.valid,
     });
 
-    if (nftInfos.length !== tokenIds.length) {
+    if (!nftValidation.valid) {
       return res.status(400).json({
         success: false,
-        message: "Một số NFT không thuộc về bạn hoặc không ở trạng thái minted",
+        message: `Một số NFT không thuộc về bạn hoặc không ở trạng thái minted. Missing: ${nftValidation.missingTokenIds.join(", ")}`,
       });
     }
+
+    const nftInfos = nftValidation.nfts;
 
     // Lưu vào database với trạng thái pending (chờ frontend gọi smart contract)
     // Frontend sẽ gọi smart contract trực tiếp, sau đó backend lắng nghe event để cập nhật
@@ -791,17 +684,10 @@ export const transferToDistributor = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Lỗi khi chuyển giao đơn thuốc:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi chuyển giao đơn thuốc",
-      error: error.message,
-    });
+    return handleError(error, "Lỗi khi chuyển giao đơn thuốc:", res, "Lỗi server khi chuyển giao đơn thuốc");
   }
 };
 
-// Lưu transaction hash sau khi transfer NFT thành công trên smart contract
-// Frontend sẽ gọi smart contract trực tiếp, sau đó gọi API này để lưu transactionHash
 export const saveTransferTransaction = async (req, res) => {
   try {
     const user = req.user;
@@ -951,39 +837,26 @@ export const saveTransferTransaction = async (req, res) => {
       userId: req.user?._id,
       timestamp: new Date().toISOString(),
     });
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi lưu transaction transfer",
-      error: error.message,
-    });
+    return handleError(error, "[saveTransferTransaction] Lỗi:", res, "Lỗi server khi lưu transaction transfer");
   }
 };
 
-// Xem lịch sử tạo đơn thuốc
 export const getProductionHistory = async (req, res) => {
   try {
     const user = req.user;
-    const { page = 1, limit = 10, search, status } = req.query;
+    const { search, status } = req.query;
 
-    if (user.role !== "pharma_company") {
-      return res.status(403).json({
-        success: false,
-        message: "Chỉ có pharma company mới có thể xem lịch sử sản xuất",
-      });
-    }
-
-    const pharmaCompany = await PharmaCompany.findOne({ user: user._id });
-    if (!pharmaCompany) {
-      return res.status(404).json({
-        success: false,
-        message: "Không tìm thấy thông tin pharma company",
-      });
-    }
+    const pharmaCompany = await BusinessEntityFactory.getBusinessEntityWithValidation(
+      user,
+      "pharma_company"
+    );
 
     const filter = { manufacturer: pharmaCompany._id };
 
     // Lấy danh sách drugId của công ty này để filter NFT
     const companyDrugIds = await DrugInfo.find({ manufacturer: pharmaCompany._id }).distinct("_id");
+
+    const pagination = QueryBuilderFactory.createPaginationOptions(req.query);
 
     if (status) {
       // Tìm NFT theo status và lấy proofOfProduction
@@ -1013,8 +886,8 @@ export const getProductionHistory = async (req, res) => {
           data: {
             productions: [],
             pagination: {
-              page: 1,
-              limit: parseInt(limit),
+              page: pagination.page,
+              limit: pagination.limit,
               total: 0,
               pages: 0,
             },
@@ -1046,8 +919,8 @@ export const getProductionHistory = async (req, res) => {
           data: {
             productions: [],
             pagination: {
-              page: 1,
-              limit: parseInt(limit),
+              page: pagination.page,
+              limit: pagination.limit,
               total: 0,
               pages: 0,
             },
@@ -1056,9 +929,9 @@ export const getProductionHistory = async (req, res) => {
       }
     }
 
-    const pageNum = parseInt(page);
-    const limitNum = parseInt(limit);
-    const skip = (pageNum - 1) * limitNum;
+    const limitNum = pagination.limit;
+    const pageNum = pagination.page;
+    const skip = pagination.skip;
 
     const productions = await ProofOfProduction.find(filter)
       .populate("drug", "tradeName atcCode")
@@ -1104,20 +977,14 @@ export const getProductionHistory = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Lỗi khi lấy lịch sử sản xuất:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi lấy lịch sử sản xuất",
-      error: error.message,
-    });
+    return handleError(error, "Lỗi khi lấy lịch sử sản xuất:", res, "Lỗi server khi lấy lịch sử sản xuất");
   }
 };
 
-// Xem lịch sử chuyển giao đơn thuốc
 export const getTransferHistory = async (req, res) => {
   try {
     const user = req.user;
-    const { page = 1, limit = 10, search, status } = req.query;
+    const { search, status } = req.query;
 
     if (user.role !== "pharma_company") {
       return res.status(403).json({
@@ -1126,22 +993,15 @@ export const getTransferHistory = async (req, res) => {
       });
     }
 
-    const filter = { fromManufacturer: user._id };
+    const filter = QueryBuilderFactory.createManufacturerInvoiceFilter(user, {
+      status: req.query.status,
+      search: req.query.search,
+    });
 
-    if (status) {
-      filter.status = status;
-    }
-
-    if (search) {
-      filter.$or = [
-        { invoiceNumber: { $regex: search, $options: "i" } },
-        { notes: { $regex: search, $options: "i" } },
-      ];
-    }
-
-    const pageNum = parseInt(page);
-    const limitNum = parseInt(limit);
-    const skip = (pageNum - 1) * limitNum;
+    const pagination = QueryBuilderFactory.createPaginationOptions(req.query);
+    const limitNum = pagination.limit;
+    const pageNum = pagination.page;
+    const skip = pagination.skip;
 
     const invoices = await ManufacturerInvoice.find(filter)
       .populate("toDistributor", "username email fullName")
@@ -1165,34 +1025,18 @@ export const getTransferHistory = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Lỗi khi lấy lịch sử chuyển giao:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi lấy lịch sử chuyển giao",
-      error: error.message,
-    });
+    return handleError(error, "Lỗi khi lấy lịch sử chuyển giao:", res, "Lỗi server khi lấy lịch sử chuyển giao");
   }
 };
 
-// Thống kê
 export const getStatistics = async (req, res) => {
   try {
     const user = req.user;
 
-    if (user.role !== "pharma_company") {
-      return res.status(403).json({
-        success: false,
-        message: "Chỉ có pharma company mới có thể xem thống kê",
-      });
-    }
-
-    const pharmaCompany = await PharmaCompany.findOne({ user: user._id });
-    if (!pharmaCompany) {
-      return res.status(404).json({
-        success: false,
-        message: "Không tìm thấy thông tin pharma company",
-      });
-    }
+    const pharmaCompany = await BusinessEntityFactory.getBusinessEntityWithValidation(
+      user,
+      "pharma_company"
+    );
 
     // Thống kê thuốc
     const totalDrugs = await DrugInfo.countDocuments({ manufacturer: pharmaCompany._id });
@@ -1270,16 +1114,10 @@ export const getStatistics = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Lỗi khi lấy thống kê:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi lấy thống kê",
-      error: error.message,
-    });
+    return handleError(error, "Lỗi khi lấy thống kê:", res, "Lỗi server khi lấy thống kê");
   }
 };
 
-// Lấy danh sách tokenId còn khả dụng (status=minted) theo một proofOfProduction
 export const getAvailableTokensForProduction = async (req, res) => {
   try {
     const user = req.user;
@@ -1317,35 +1155,18 @@ export const getAvailableTokensForProduction = async (req, res) => {
       data: { availableTokenIds },
     });
   } catch (error) {
-    console.error("Lỗi khi lấy token khả dụng:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi lấy token khả dụng",
-      error: error.message,
-    });
+    return handleError(error, "Lỗi khi lấy token khả dụng:", res, "Lỗi server khi lấy token khả dụng");
   }
 };
 
-// Xem thông tin pharma company (chỉ xem, không chỉnh sửa)
 export const getPharmaCompanyInfo = async (req, res) => {
   try {
     const user = req.user;
 
-    if (user.role !== "pharma_company") {
-      return res.status(403).json({
-        success: false,
-        message: "Chỉ có pharma company mới có thể xem thông tin",
-      });
-    }
-
-    const pharmaCompany = await PharmaCompany.findOne({ user: user._id });
-
-    if (!pharmaCompany) {
-      return res.status(404).json({
-        success: false,
-        message: "Không tìm thấy thông tin pharma company",
-      });
-    }
+    const pharmaCompany = await BusinessEntityFactory.getBusinessEntityWithValidation(
+      user,
+      "pharma_company"
+    );
 
     const userInfo = await User.findById(user._id).select("-password");
 
@@ -1357,16 +1178,10 @@ export const getPharmaCompanyInfo = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Lỗi khi lấy thông tin pharma company:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi lấy thông tin pharma company",
-      error: error.message,
-    });
+    return handleError(error, "Lỗi khi lấy thông tin pharma company:", res, "Lỗi server khi lấy thông tin pharma company");
   }
 };
 
-// Lấy danh sách distributors để chọn khi chuyển giao
 export const getDistributors = async (req, res) => {
   try {
     const user = req.user;
@@ -1378,21 +1193,20 @@ export const getDistributors = async (req, res) => {
       });
     }
 
-    const { page = 1, limit = 10, search, status = "active" } = req.query;
+    const filter = { status: req.query.status || "active" };
 
-    const filter = { status };
-
-    if (search) {
+    if (req.query.search) {
       filter.$or = [
-        { name: { $regex: search, $options: "i" } },
-        { licenseNo: { $regex: search, $options: "i" } },
-        { taxCode: { $regex: search, $options: "i" } },
+        { name: { $regex: req.query.search, $options: "i" } },
+        { licenseNo: { $regex: req.query.search, $options: "i" } },
+        { taxCode: { $regex: req.query.search, $options: "i" } },
       ];
     }
 
-    const pageNum = parseInt(page);
-    const limitNum = parseInt(limit);
-    const skip = (pageNum - 1) * limitNum;
+    const pagination = QueryBuilderFactory.createPaginationOptions(req.query);
+    const limitNum = pagination.limit;
+    const pageNum = pagination.page;
+    const skip = pagination.skip;
 
     const distributors = await Distributor.find(filter)
       .populate("user", "username email fullName walletAddress")
@@ -1415,18 +1229,10 @@ export const getDistributors = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Lỗi khi lấy danh sách distributors:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi lấy danh sách distributors",
-      error: error.message,
-    });
+    return handleError(error, "Lỗi khi lấy danh sách distributors:", res, "Lỗi server khi lấy danh sách distributors");
   }
 };
 
-// ============ QUẢN LÝ DISTRIBUTION (XÁC NHẬN QUYỀN NFT) ============
-
-// Lấy danh sách distributions chờ xác nhận quyền NFT
 export const getDistributions = async (req, res) => {
   try {
     const user = req.user;
@@ -1438,20 +1244,14 @@ export const getDistributions = async (req, res) => {
       });
     }
 
-    const { page = 1, limit = 10, status = "confirmed" } = req.query;
+    const filter = QueryBuilderFactory.createProofOfDistributionFilter(user, {
+      status: req.query.status || "confirmed",
+    });
 
-    const filter = {
-      fromManufacturer: user._id,
-    };
-
-    // Nếu có status, chỉ lấy distributions với status đó
-    if (status) {
-      filter.status = status;
-    }
-
-    const pageNum = parseInt(page);
-    const limitNum = parseInt(limit);
-    const skip = (pageNum - 1) * limitNum;
+    const pagination = QueryBuilderFactory.createPaginationOptions(req.query);
+    const limitNum = pagination.limit;
+    const pageNum = pagination.page;
+    const skip = pagination.skip;
 
     const distributions = await ProofOfDistribution.find(filter)
       .populate("toDistributor", "username email fullName walletAddress")
@@ -1476,16 +1276,10 @@ export const getDistributions = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Lỗi khi lấy danh sách distributions:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi lấy danh sách distributions",
-      error: error.message,
-    });
+    return handleError(error, "Lỗi khi lấy danh sách distributions:", res, "Lỗi server khi lấy danh sách distributions");
   }
 };
 
-// Lấy chi tiết distribution
 export const getDistributionDetail = async (req, res) => {
   try {
     const user = req.user;
@@ -1523,21 +1317,7 @@ export const getDistributionDetail = async (req, res) => {
     // Lấy tokenIds từ ManufacturerInvoice nếu có
     let tokenIds = [];
     if (distribution.manufacturerInvoice) {
-      const invoice = distribution.manufacturerInvoice;
-      
-      // Lấy tokenIds từ NFTInfo dựa trên chainTxHash hoặc proofOfProduction
-      let nftQuery = {};
-      
-      if (invoice.chainTxHash) {
-        nftQuery.chainTxHash = invoice.chainTxHash;
-      } else if (distribution.proofOfProduction) {
-        nftQuery.proofOfProduction = distribution.proofOfProduction._id || distribution.proofOfProduction;
-      }
-      
-      if (Object.keys(nftQuery).length > 0) {
-        const nfts = await NFTInfo.find(nftQuery).select("tokenId");
-        tokenIds = nfts.map(nft => nft.tokenId);
-      }
+      tokenIds = await NFTService.getTokenIdsFromInvoice(distribution.manufacturerInvoice, null);
     }
 
     const distributionObj = distribution.toObject();
@@ -1548,16 +1328,10 @@ export const getDistributionDetail = async (req, res) => {
       data: distributionObj,
     });
   } catch (error) {
-    console.error("Lỗi khi lấy chi tiết distribution:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi lấy chi tiết distribution",
-      error: error.message,
-    });
+    return handleError(error, "Lỗi khi lấy chi tiết distribution:", res, "Lỗi server khi lấy chi tiết distribution");
   }
 };
 
-// Xác nhận quyền NFT cho distributor
 export const approveDistribution = async (req, res) => {
   try {
     const user = req.user;
@@ -1834,38 +1608,28 @@ export const approveDistribution = async (req, res) => {
       userId: req.user?._id,
       timestamp: new Date().toISOString(),
     });
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi xác nhận quyền NFT",
-      error: error.message,
-    });
+    return handleError(error, "[approveDistribution] Lỗi:", res, "Lỗi server khi xác nhận quyền NFT");
   }
 };
-
-
-
-// Pharma company Chart
 
 export const pharmaCompanyChart1Week = async (req , res) => {
   try {
     const user = req.user;
-    // Tìm PharmaCompany theo user
-    const pharmaCompany = await PharmaCompany.findOne({ user: user._id });
-    if (!pharmaCompany) {
-      return res.status(404).json({
-        success: false,
-        message: "Không tìm thấy pharma company",
-        error: "PharmaCompany not found",
-      });
-    }
+    const pharmaCompany = await BusinessEntityFactory.getBusinessEntityWithValidation(
+      user,
+      "pharma_company"
+    );
 
-    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const { start: sevenDaysAgo } = DateHelper.getWeekRange();
     const productions = await ProofOfProduction.find({
       manufacturer: pharmaCompany._id,
       createdAt: { $gte: sevenDaysAgo },
     })
       .populate("drug", "tradeName atcCode")
       .sort({ createdAt: -1 });
+
+    // Group theo ngày
+    const dailyStats = DataAggregationService.groupProductionsByDate(productions);
 
     return res.status(200).json({
       success: true,
@@ -1874,41 +1638,24 @@ export const pharmaCompanyChart1Week = async (req , res) => {
         count: productions.length,
         from: sevenDaysAgo,
         to: new Date(),
+        dailyStats,
       },
     });
   } catch (error) {
-    console.error("Lỗi khi lấy biểu đồ 1 tuần pharma company:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi lấy dữ liệu biểu đồ 1 tuần",
-      error: error.message,
-    });
+    return handleError(error, "Lỗi khi lấy biểu đồ 1 tuần pharma company:", res, "Lỗi server khi lấy dữ liệu biểu đồ 1 tuần");
   }
-}
-
-
-// So Sánh ngày hnay và ngày hqua trên lệch bao nhiêu 
+};
 
 export const pharmaCompanyChartTodayYesterday = async (req , res) => {
-
-// Thống kê ProofOfProduction theo khoảng thời gian
   try {
     const user = req.user;
-    // Tìm PharmaCompany theo user
-    const pharmaCompany = await PharmaCompany.findOne({ user: user._id });
-    if (!pharmaCompany) {
-      return res.status(404).json({
-        success: false,
-        message: "Không tìm thấy pharma company",
-        error: "PharmaCompany not found",
-      });
-    }
-    // Tính đúng khoảng thời gian (bắt đầu của hôm nay và hôm trước) theo timezone server
-    const startOfToday = new Date();
-    startOfToday.setHours(0, 0, 0, 0);
+    const pharmaCompany = await BusinessEntityFactory.getBusinessEntityWithValidation(
+      user,
+      "pharma_company"
+    );
 
-    const startOfYesterday = new Date(startOfToday);
-    startOfYesterday.setDate(startOfYesterday.getDate() - 1);
+    const { start: startOfToday } = DateHelper.getTodayRange();
+    const { start: startOfYesterday } = DateHelper.getYesterdayRange();
 
     // Đếm số production của hôm qua (từ startOfYesterday đến trước startOfToday)
     const yesterdayCount = await ProofOfProduction.countDocuments({
@@ -1923,13 +1670,10 @@ export const pharmaCompanyChartTodayYesterday = async (req , res) => {
     });
 
     // Tính chênh lệch và phần trăm thay đổi
-    const diff = todayCount - yesterdayCount;
-    let percentChange = null;
-    if (yesterdayCount === 0) {
-      percentChange = todayCount === 0 ? 0 : 100; 
-    } else {
-      percentChange = (diff / yesterdayCount) * 100;
-    }
+    const { diff, percentChange } = StatisticsCalculationService.calculateTodayYesterdayStats(
+      todayCount,
+      yesterdayCount
+    );
 
     const todayProductions = await ProofOfProduction.find({
       manufacturer: pharmaCompany._id,
@@ -1955,54 +1699,22 @@ export const pharmaCompanyChartTodayYesterday = async (req , res) => {
         },
       },
     });
-
   } catch (error) {
-    console.error("Lỗi khi lấy biểu đồ 1 tuần pharma company:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi lấy dữ liệu biểu đồ 1 tuần",
-      error: error.message,
-    });
+    return handleError(error, "Lỗi khi lấy biểu đồ 1 tuần pharma company:", res, "Lỗi server khi lấy dữ liệu biểu đồ 1 tuần");
   }
-}
-
+};
 
 export const getProofOfProductionByDateRange = async (req, res) => {
   try {
     const user = req.user;
     const { startDate, endDate } = req.query;
 
+    const { start, end } = DateHelper.parseDateRange(startDate, endDate);
 
-    // Validate dates
-    if (!startDate || !endDate) {
-      return res.status(400).json({
-        success: false,
-        message: "Vui lòng cung cấp startDate và endDate",
-      });
-    }
-
-    const start = new Date(startDate);
-    start.setHours(0, 0, 0, 0);
-    
-    const end = new Date(endDate);
-    end.setHours(23, 59, 59, 999);
-
-    // Validate date range
-    if (start > end) {
-      return res.status(400).json({
-        success: false,
-        message: "startDate phải nhỏ hơn hoặc bằng endDate",
-      });
-    }
-
-    // Tìm PharmaCompany
-    const pharmaCompany = await PharmaCompany.findOne({ user: user._id });
-    if (!pharmaCompany) {
-      return res.status(404).json({
-        success: false,
-        message: "Không tìm thấy pharma company",
-      });
-    }
+    const pharmaCompany = await BusinessEntityFactory.getBusinessEntityWithValidation(
+      user,
+      "pharma_company"
+    );
 
     // Query productions trong khoảng thời gian
     const productions = await ProofOfProduction.find({
@@ -2016,29 +1728,12 @@ export const getProofOfProductionByDateRange = async (req, res) => {
     .sort({ createdAt: -1 });
 
     // Tính tổng số lượng sản xuất
-    const totalQuantity = productions.reduce((sum, prod) => sum + (prod.quantity || 0), 0);
+    const totalQuantity = DataAggregationService.calculateTotalQuantity(productions, 'quantity');
 
     // Group theo ngày để dễ vẽ biểu đồ
-    const dailyStats = {};
-    productions.forEach(prod => {
-      const date = prod.createdAt.toISOString().split('T')[0];
-      if (!dailyStats[date]) {
-        dailyStats[date] = {
-          count: 0,
-          quantity: 0,
-          productions: []
-        };
-      }
-      dailyStats[date].count++;
-      dailyStats[date].quantity += (prod.quantity || 0);
-      dailyStats[date].productions.push({
-        id: prod._id,
-        drug: prod.drug,
-        quantity: prod.quantity,
-        batchNumber: prod.batchNumber,
-        createdAt: prod.createdAt
-      });
-    });
+    const dailyStats = DataAggregationService.groupProductionsByDate(productions);
+
+    const days = DateHelper.getDaysDifference(start, end);
 
     return res.status(200).json({
       success: true,
@@ -2046,12 +1741,12 @@ export const getProofOfProductionByDateRange = async (req, res) => {
         dateRange: {
           from: start,
           to: end,
-          days: Math.ceil((end - start) / (1000 * 60 * 60 * 24))
+          days
         },
         summary: {
           totalProductions: productions.length,
           totalQuantity,
-          averagePerDay: productions.length / Math.max(1, Math.ceil((end - start) / (1000 * 60 * 60 * 24)))
+          averagePerDay: StatisticsCalculationService.calculateAveragePerDay(productions.length, days)
         },
         dailyStats,
         productions
@@ -2059,54 +1754,23 @@ export const getProofOfProductionByDateRange = async (req, res) => {
     });
 
   } catch (error) {
-    console.error("Lỗi khi thống kê theo khoảng thời gian:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi thống kê",
-      error: error.message
-    });
+    return handleError(error, "Lỗi khi thống kê theo khoảng thời gian:", res, "Lỗi server khi thống kê");
   }
 };
-
 
 export const getProofOfDistributionByDateRange = async (req, res) => {
   try {
     const user = req.user;
     const { startDate, endDate } = req.query;
 
+    const { start, end } = DateHelper.parseDateRange(startDate, endDate);
 
-    // Validate dates
-    if (!startDate || !endDate) {
-      return res.status(400).json({
-        success: false,
-        message: "Vui lòng cung cấp startDate và endDate",
-      });
-    }
+    const pharmaCompany = await BusinessEntityFactory.getBusinessEntityWithValidation(
+      user,
+      "pharma_company"
+    );
 
-    const start = new Date(startDate);
-    start.setHours(0, 0, 0, 0);
-    
-    const end = new Date(endDate);
-    end.setHours(23, 59, 59, 999);
-
-    // Validate date range
-    if (start > end) {
-      return res.status(400).json({
-        success: false,
-        message: "startDate phải nhỏ hơn hoặc bằng endDate",
-      });
-    }
-
-    // Tìm PharmaCompany
-    const pharmaCompany = await PharmaCompany.findOne({ user: user._id });
-    if (!pharmaCompany) {
-      return res.status(404).json({
-        success: false,
-        message: "Không tìm thấy pharma company",
-      });
-    }
-
-    // Query productions trong khoảng thời gian
+    // Query distributions trong khoảng thời gian
     const distributions = await ProofOfDistribution.find({
       fromManufacturer: user._id,
       createdAt: { 
@@ -2116,30 +1780,13 @@ export const getProofOfDistributionByDateRange = async (req, res) => {
     })
     .sort({ createdAt: -1 });
 
-    // Tính tổng số lượng sản xuất
-    const totalQuantity = distributions.reduce((sum, prod) => sum + (prod.quantity || 0), 0);
+    // Tính tổng số lượng
+    const totalQuantity = DataAggregationService.calculateTotalQuantity(distributions, 'quantity');
 
     // Group theo ngày để dễ vẽ biểu đồ
-    const dailyStats = {};
-    distributions.forEach(prod => {
-      const date = prod.createdAt.toISOString().split('T')[0];
-      if (!dailyStats[date]) {
-        dailyStats[date] = {
-          count: 0,
-          quantity: 0,
-          distributions: []
-        };
-      }
-      dailyStats[date].count++;
-      dailyStats[date].quantity += (prod.quantity || 0);
-      dailyStats[date].distributions.push({
-        id: prod._id,
-        drug: prod.drug,
-        quantity: prod.quantity,
-        batchNumber: prod.batchNumber,
-        createdAt: prod.createdAt
-      });
-    });
+    const dailyStats = DataAggregationService.groupDistributionsByDate(distributions);
+
+    const days = DateHelper.getDaysDifference(start, end);
 
     return res.status(200).json({
       success: true,
@@ -2147,12 +1794,12 @@ export const getProofOfDistributionByDateRange = async (req, res) => {
         dateRange: {
           from: start,
           to: end,
-          days: Math.ceil((end - start) / (1000 * 60 * 60 * 24))
+          days
         },
         summary: {
           totalDistribution: distributions.length,
           totalQuantity,
-          averagePerDay: distributions.length / Math.max(1, Math.ceil((end - start) / (1000 * 60 * 60 * 24)))
+          averagePerDay: StatisticsCalculationService.calculateAveragePerDay(distributions.length, days)
         },
         dailyStats,
         distributions
@@ -2160,15 +1807,9 @@ export const getProofOfDistributionByDateRange = async (req, res) => {
     });
 
   } catch (error) {
-    console.error("Lỗi khi thống kê theo khoảng thời gian:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi thống kê",
-      error: error.message
-    });
+    return handleError(error, "Lỗi khi thống kê theo khoảng thời gian:", res, "Lỗi server khi thống kê");
   }
 };
-
 
 export const getManufactureIPFSStatus = async (req , res) => 
   {
@@ -2215,7 +1856,6 @@ export const getManufactureIPFSStatus = async (req , res) =>
   }
 }
 
-// Thống kê chuyển giao (ManufacturerInvoice) theo khoảng thời gian
 export const getManufacturerTransfersByDateRange = async (req, res) => {
   try {
     const user = req.user;
@@ -2313,11 +1953,6 @@ export const getManufacturerTransfersByDateRange = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Lỗi khi thống kê transfers theo khoảng thời gian:", error);
-    return res.status(500).json({
-      success: false,
-      message: "Lỗi server khi thống kê",
-      error: error.message,
-    });
+    return handleError(error, "Lỗi khi thống kê transfers theo khoảng thời gian:", res, "Lỗi server khi thống kê");
   }
 };
