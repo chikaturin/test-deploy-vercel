@@ -621,7 +621,7 @@ export const getDistributionHistory = async (req, res) => {
     const distributions = await ProofOfDistribution.find(filter)
       .populate("fromManufacturer", "username email fullName")
       .populate("manufacturerInvoice")
-      .sort({ createdAt: -1 })
+      .sort(getDefaultSort())
       .skip(skip)
       .limit(limit);
 
@@ -656,17 +656,13 @@ export const getTransferToPharmacyHistory = async (req, res) => {
       }).select("user");
       
       const pharmacyUserIds = pharmacies.map(p => p.user).filter(Boolean);
+      const searchConditions = [{ invoiceNumber: { $regex: req.query.search, $options: "i" } }];
       
       if (pharmacyUserIds.length > 0) {
-        filter.$or = [
-          { toPharmacy: { $in: pharmacyUserIds } },
-          { invoiceNumber: { $regex: req.query.search, $options: "i" } },
-        ];
-      } else {
-        filter.$or = [
-          { invoiceNumber: { $regex: req.query.search, $options: "i" } },
-        ];
+        searchConditions.unshift({ toPharmacy: { $in: pharmacyUserIds } });
       }
+      
+      filter.$or = searchConditions;
     }
 
     const { page, limit, skip } = QueryBuilderFactory.createPaginationOptions(req.query);
@@ -874,7 +870,7 @@ export const getDrugs = async (req, res) => {
 
     const drugs = await DrugInfo.find(filter)
       .populate("manufacturer", "name")
-      .sort({ createdAt: -1 })
+      .sort(getDefaultSort())
       .skip(skip)
       .limit(limit);
 
@@ -1008,7 +1004,7 @@ export const distributorChartOneWeek = async (req, res) => {
     })
       .populate("fromManufacturer", "username email fullName")
       .populate("proofOfProduction")
-      .sort({ createdAt: -1 });
+      .sort(getDefaultSort());
 
     // Group theo ngày
     const dailyStats = DataAggregationService.groupInvoicesByDate(invoices);
@@ -1067,7 +1063,7 @@ export const distributorChartTodayYesterday = async (req, res) => {
     })
       .populate("fromManufacturer", "username email fullName")
       .populate("proofOfProduction")
-      .sort({ createdAt: -1 });
+      .sort(getDefaultSort());
 
     return res.status(200).json({
       success: true,
@@ -1116,7 +1112,7 @@ export const getDistributorInvoicesByDateRange = async (req, res) => {
     })
       .populate("fromManufacturer", "username email fullName")
       .populate("proofOfProduction")
-      .sort({ createdAt: -1 });
+      .sort(getDefaultSort());
 
     // Tính tổng số lượng
     const totalQuantity = DataAggregationService.calculateTotalQuantity(invoices, 'quantity');
@@ -1173,7 +1169,7 @@ export const getDistributorDistributionsByDateRange = async (req, res) => {
     })
       .populate("fromManufacturer", "username email fullName")
       .populate("manufacturerInvoice")
-      .sort({ createdAt: -1 });
+      .sort(getDefaultSort());
 
     // Tính tổng số lượng
     const totalQuantity = DataAggregationService.calculateTotalQuantity(distributions, 'distributedQuantity');
@@ -1253,7 +1249,7 @@ export const getDistributorTransfersToPharmacyByDateRange = async (req, res) => 
     })
       .populate("toPharmacy", "username email fullName")
       .populate("drug", "tradeName atcCode")
-      .sort({ createdAt: -1 });
+      .sort(getDefaultSort());
 
     // Tính tổng số lượng
     const totalQuantity = commercialInvoices.reduce((sum, inv) => sum + (inv.quantity || 0), 0);

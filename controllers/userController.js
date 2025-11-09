@@ -12,6 +12,9 @@ import ProofOfPharmacy from "../models/ProofOfPharmacy.js";
 import bcrypt from "bcryptjs";
 import { getTrackingHistory } from "../services/blockchainService.js";
 import { handleError, handleAuthError, handleValidationError } from "../utils/errorHandler.js";
+import QueryBuilderFactory from "../services/factories/QueryBuilderFactory.js";
+import ResponseFormatterFactory from "../services/factories/ResponseFormatterFactory.js";
+import { getDefaultSort } from "../utils/SortHelper.js";
 
 export const getAllUsers = async (req, res) => {
   try {
@@ -25,7 +28,7 @@ export const getAllUsers = async (req, res) => {
       .populate("pharmaCompany", "name licenseNo taxCode")
       .populate("distributor", "name licenseNo taxCode")
       .populate("pharmacy", "name licenseNo taxCode")
-      .sort({ createdAt: -1 })
+      .sort(getDefaultSort())
       .skip(skip)
       .limit(limit);
 
@@ -593,7 +596,7 @@ export const searchDrugs = async (req, res) => {
     const drugs = await DrugInfo.find(filter)
       .populate("manufacturer", "name country")
       .select("tradeName genericName atcCode dosageForm strength route packaging storage warnings activeIngredients status manufacturer")
-      .sort({ createdAt: -1 })
+      .sort(getDefaultSort())
       .skip(skip)
       .limit(limit);
 
